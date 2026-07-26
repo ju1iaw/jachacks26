@@ -32,13 +32,43 @@ base_route_app = "app"
 
 [client]
 
-# Bridge's four LLM roles live in core/reason.jac. With no API key set the app
-# falls back to deterministic heuristics and still runs end to end -- export
-# OPENAI_API_KEY (or ANTHROPIC_API_KEY / GOOGLE_API_KEY) to switch the real
-# model on. Override the model for one shell with BYLLM_DEFAULT_MODEL=...
+# Bridge's LLM roles live in core/reason.jac. There is NO heuristic fallback --
+# with no API key every feature that touches the model errors, and `main.jac`
+# says so loudly at boot. Export OPENAI_API_KEY (or ANTHROPIC_API_KEY /
+# GOOGLE_API_KEY). Override the model for one shell with BYLLM_DEFAULT_MODEL=...
 [byllm.model]
 default_model = "gpt-4o-mini"
 
 [byllm.call_params]
 temperature = 0.2
 
+
+# ---------------------------------------------------------------------------
+# Deployment
+#
+# DO NOT ADD A [scale.*] TABLE HERE. Any `[scale.*]` key flips `jac start` out
+# of single-process mode and into microservice mode: the client `sv import`s
+# core.commons / core.graph / core.walkers, so scale splits those into three
+# services behind a gateway. Verified: with any [scale.*] present, every call
+# dies on
+#
+#     Shared root unavailable: id ... did not resolve to a Root node
+#
+# because each service gets its own store (core/.jac/data/ alongside
+# .jac/data/) and Bridge keeps its entire commons -- orgs, needs, pledges -- on
+# `root.shared`. With no [scale.*] table the app runs as one process and the
+# full chain works over HTTP. This costs the `[scale.server] docs_enabled`
+# switch, so /docs and /openapi.json stay served; see the deployment notes in
+# README.md for what to put in front of them.
+#
+# The deploy environment MUST carry:
+#   OPENAI_API_KEY   no fallback path exists; the app is inert without it
+#   JWT_SECRET       otherwise tokens are signed with the public default
+#                    "supersecretkey_for_testing_only!" and anyone can forge a
+#                    token for any user. Read straight from the env -- no
+#                    jac.toml key needed, which is what keeps it out of git.
+# Strongly recommended:
+#   MONGODB_URI      the default SQLite store lives in .jac/data/, which is
+#                    ephemeral on a container platform: every restart drops
+#                    accounts and cases.
+# ---------------------------------------------------------------------------
