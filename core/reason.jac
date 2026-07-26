@@ -273,11 +273,11 @@ obj SituationRead {
 }
 
 sem SituationRead = "Structured facts pulled out of a person's plain-language description of their crisis.";
-sem SituationRead.categories = "Which kinds of help this person needs. Use only these exact values: 'food', 'shelter', 'legal', 'jobs'. Order by urgency, most urgent first. Only include a category they actually need -- mentioning they have no car is a constraint, not a request for shelter.";
+sem SituationRead.categories = "Which kinds of help this person needs. Use only these exact values: 'food', 'shelter', 'legal', 'jobs'. Order by urgency, most urgent first. Only include a category they actually need -- mentioning they have no car is a constraint, not a request for shelter. If they identify as a senior/elderly/retired person seeking help but do not name a concrete need, include 'food' (senior meals / congregate dining is the usual first resource) and any other category their words clearly imply.";
 sem SituationRead.urgency = "How fast this must be solved. Exactly one of: 'critical' (today/tonight), 'high' (this week), 'medium' (this month), 'low'.";
 sem SituationRead.household = "How many people are being fed or housed, including the person themself. Default to 1 if not stated.";
 sem SituationRead.zip_prefix = "The first 3 digits of their ZIP code if mentioned, otherwise an empty string. Never the full ZIP.";
-sem SituationRead.assets = "Concrete things they say they HAVE that could satisfy an eligibility requirement: e.g. 'state photo ID', 'proof of address', 'social security card', 'car', 'phone', 'bank account'. Only list what they actually claim to have. Never list something they say they lack.";
+sem SituationRead.assets = "Concrete things they say they HAVE that could satisfy an eligibility requirement: e.g. 'state photo ID', 'proof of address', 'social security card', 'car', 'phone', 'bank account'. Also include audience facts they claim about themselves when relevant to program eligibility: e.g. 'senior', 'veteran', 'family with children'. Only list what they actually claim. Never list something they say they lack.";
 sem SituationRead.anonymized_summary = "A short third-person clause describing the HOUSEHOLD and its practical constraints only. Do NOT say what they need -- that is carried separately. Strip every name, street address, employer, full ZIP, phone number and anything else identifying. Under 15 words, ending in a period. e.g. 'Household of 3; no car, no stove access, no photo ID.'";
 sem SituationRead.headline = "A short, warm, second-person sentence acknowledging what they are dealing with. Under 15 words. No platitudes, no 'I'm sorry to hear'.";
 

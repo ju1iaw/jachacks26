@@ -69,6 +69,9 @@ import from core.graph {
     Requires, RoutedThrough,
     age_hours, age_label, need_code, now_iso, rewind
 }
+import from core.directory {
+    audience_is_senior, commons_has_live_orgs, is_demo_org, sync_live_directory
+}
 import from core.commons {
     engine_report, ensure_commons, flush_engine_log, log_walker, org_cards,
     orgs_for, pledge_cards, recent_activity, _my_account
@@ -205,6 +208,8 @@ walker:protect EligibilityPathWalker {
     has assets: str = "";
     has categories: list[str] = [];
     has zip_prefix: str = "";
+    has prefer_senior: bool = False;
+    has skip_demo_seeds: bool = False;
     has orgs_seen: int = 0;
     has gates_checked: int = 0;
     has blocked: int = 0;
@@ -225,6 +230,16 @@ walker:protect EligibilityPathWalker {
         self.assets = ", ".join(target.assets) if target.assets else "nothing confirmed";
         self.categories = target.categories;
         self.zip_prefix = target.zip_prefix;
+        asset_blob = (" ".join(target.assets) + " " + target.situation).lower();
+        self.prefer_senior = (
+            "senior" in asset_blob
+            or "elderly" in asset_blob
+            or "elder" in asset_blob
+            or "retire" in asset_blob
+        );
+        # Once OpenStreetMap listings are on the commons, hide the fake 555
+        # demo seeds so the plan is built from real contact info.
+        self.skip_demo_seeds = commons_has_live_orgs();
 
         for stale in [target ->:HasStep:->] {
             del stale;
@@ -239,7 +254,16 @@ walker:protect EligibilityPathWalker {
         if here.tier > 2 {
             skip;
         }
-        if self.zip_prefix and here.tier == 1 and here.zip_prefix != self.zip_prefix {
+        if self.skip_demo_seeds and is_demo_org(here) {
+            skip;
+        }
+        # Live listings sometimes omit a ZIP prefix — treat empty as in-area.
+        if (
+            self.zip_prefix
+            and here.tier == 1
+            and here.zip_prefix
+            and here.zip_prefix != self.zip_prefix
+        ) {
             skip;
         }
 
@@ -251,8 +275,16 @@ walker:protect EligibilityPathWalker {
 
         # Rank groups the plan by category, then by the order orgs were walked,
         # leaving a slot just above each org for the step that unblocks it.
+        # Senior-audience orgs sort ahead when the person is a senior.
         band = CATEGORY_ORDER.index(here.category) if here.category in CATEGORY_ORDER else len(CATEGORY_ORDER);
-        base = (band * 1000) + (self.orgs_seen * 10);
+        senior_boost = 0;
+        if self.prefer_senior {
+            blob = (here.name + " " + here.notes).lower();
+            if "audience:senior" in blob or "senior" in blob or "elder" in blob {
+                senior_boost = -400;
+            }
+        }
+        base = (band * 1000) + senior_boost + (self.orgs_seen * 10);
 
         blockers: list[str] = [];
         unblocks: list[str] = [];
@@ -624,6 +656,11 @@ walker:protect IntakeWalker {
         person.alias = name;
         person.situation = self.situation;
         person.categories = read.categories;
+        # Senior-only asks often omit an explicit need; default to food so
+        # eligibility has categories to walk (senior meals / congregate dining).
+        if not person.categories and audience_is_senior(self.situation, read.assets) {
+            person.categories = ["food"];
+        }
         person.household = read.household;
         # The location the person gave at signup wins over the one the model
         # inferred from their story. It was collected explicitly, with a
@@ -692,6 +729,23 @@ walker:protect IntakeWalker {
             log_walker(
                 "IntakeWalker",
                 "no service area resolved -- tier-1 results are NOT filtered by area"
+            );
+        }
+
+        # Pull real organisations from OpenStreetMap into the commons *before*
+        # eligibility walks the graph, so senior / food / shelter searches land
+        # on live listings rather than only the demo seed set.
+        try {
+            sync_live_directory(
+                self.situation,
+                person.categories,
+                person.zip_prefix,
+                person.assets
+            );
+        } except Exception as e {
+            log_walker(
+                "LiveDirectory",
+                f"online directory lookup failed, continuing with seeded commons: {str(e)}"
             );
         }
 

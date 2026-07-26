@@ -1,7 +1,9 @@
 """Expandable offer cards and need sections for the helper/donor page."""
 
-import from ..core.graph { NeedCard, OfferView }
 import from .Bits { NeedTile }
+
+# Types only — core/graph.jac is server-side and compiles to an empty client stub.
+sv import from ..core.graph { NeedCard, OfferView }
 
 
 def:pub OfferCard(

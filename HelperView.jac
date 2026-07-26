@@ -8,9 +8,22 @@ each with a gray "show completed" fold.
 import from react { useEffect }
 import from .components.HelperBits { NeedSection, OffersPanel }
 
-sv import from .core.graph { NeedCard, OfferView, OrgCard, PledgeCard }
+sv import from .core.graph { NeedCard, OrgCard, PledgeCard }
 sv import from .core.walkers {
     CommunityBoard, HelperOfferWalker, MatchWalker, RetirePledgeWalker
+}
+
+
+# Client constructor. Same shape as core/graph.OfferView (server reports);
+# graph.jac does not compile onto the client, so the UI needs its own copy.
+obj OfferView {
+    has id: str;
+    has name: str;
+    has kind: str = "time";
+    has description: str = "";
+    has details: list[str] = [];
+    has notes: str = "";
+    has pledge_id: str = "";
 }
 
 

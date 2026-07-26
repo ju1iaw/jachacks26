@@ -1,6 +1,7 @@
 """Small presentational pieces shared by both sides of Bridge."""
 
-import from ..core.graph { PlanStep, NeedCard, StrategyView, WalkerTrace }
+# Types only — core/graph.jac is server-side and compiles to an empty client stub.
+sv import from ..core.graph { PlanStep, NeedCard, StrategyView, WalkerTrace }
 
 
 glob STATUS_PILL: dict[str, str] = {

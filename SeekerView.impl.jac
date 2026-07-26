@@ -13,16 +13,24 @@ def _ref_sugs(ref: Ref[list[Suggestion]]) -> list[Suggestion] {
 
 
 impl SeekerView.apply(board: SeekerBoard) -> int {
+    # Pre-intake poll boards have no Person yet. Applying them would wipe
+    # suggestions (and used to crash when nested lists were missing on the wire).
+    if not board.person_id and not board.has_plan {
+        return 0;
+    }
+
     nudge = board.nudge;
 
     # Open question still comes from the agent's strategy brief on the board —
     # we just don't render the research/activity panels in the seeker UI.
     # Skip while an answer is in flight so the 3s poll cannot restore the card.
-    answering = True if answering_ref.current else False;
-    if not answering {
+    # Local flag — do not assign `answering` here (that is component state).
+    is_answering = True if answering_ref.current else False;
+    if not is_answering {
         asked = "";
         why = "";
-        for brief in board.strategy {
+        briefs = board.strategy if board.strategy else [];
+        for brief in briefs {
             if brief.open_question {
                 asked = brief.open_question;
                 why = brief.question_why;
@@ -32,14 +40,22 @@ impl SeekerView.apply(board: SeekerBoard) -> int {
         clarify_why = why;
     }
 
-    if board.situation and not situation {
+    # Seed the draft once from the graph. Never again — the 3s poll used to
+    # overwrite mid-keystroke (stale empty `situation` in the apply closure).
+    if (
+        board.situation
+        and not situation_seeded_ref.current
+        and not draft_touched_ref.current
+    ) {
         situation = board.situation;
+        situation_seeded_ref.current = True;
     }
 
     handled = _ref_ids(handled_ref);
     next_ongoing = _ref_sugs(ongoing_ref);
 
-    candidates = board_to_suggestions(board.steps);
+    steps = board.steps if board.steps else [];
+    candidates = board_to_suggestions(steps);
     next_inbox: list[Suggestion] = [];
     for sug in candidates {
         if sug.id in handled {
@@ -49,7 +65,8 @@ impl SeekerView.apply(board: SeekerBoard) -> int {
     }
 
     # Matched helper offers land in the inbox with Accept (same as programs).
-    for card in board.needs {
+    needs = board.needs if board.needs else [];
+    for card in needs {
         if card.status != "matched" {
             continue;
         }
@@ -101,13 +118,16 @@ impl SeekerView.submit_with(text: str) -> None {
         error = "Tell us what you need first.";
         return;
     }
+    draft_touched_ref.current = True;
     situation = request;
     busy = True;
     error = "";
     inbox_len: int = 0;
+    got_board = False;
     try {
         result = await root spawn IntakeWalker(situation=request);
         if result.reports and len(result.reports) > 0 {
+            got_board = True;
             inbox_len = apply(result.reports[0]);
         }
     } except Exception as e {
@@ -119,7 +139,9 @@ impl SeekerView.submit_with(text: str) -> None {
         }
     }
 
-    if inbox_len == 0 {
+    # Only seed demos when intake did not return a board. A real (possibly empty)
+    # inbox after a successful plan must not be overwritten with examples.
+    if inbox_len == 0 and not got_board {
         handled = _ref_ids(handled_ref);
         next_inbox: list[Suggestion] = [];
         for d in demo_suggestions() {
@@ -134,6 +156,7 @@ impl SeekerView.submit_with(text: str) -> None {
 
 
 impl SeekerView.use_example(e: MouseEvent) -> None {
+    draft_touched_ref.current = True;
     situation = EXAMPLE;
 }
 

@@ -311,7 +311,14 @@ def log_walker(by_walker: str, detail: str) {
     if len(existing) > ACTIVITY_CAP {
         ranked = sorted(existing, key=lambda (a: Activity) -> int { return a.seq; });
         for stale in ranked[:len(existing) - ACTIVITY_CAP] {
-            del stale;
+            # Other seekers only have READ on shared Activity nodes; trimming is
+            # best-effort and must never fail the walker that logged the line.
+            try {
+                del stale;
+            } except Exception {
+                # Not our Activity to delete — leave it for the owner.
+                continue;
+            }
         }
     }
 }

@@ -7,8 +7,7 @@ offers that are not yet redeemed also land under Ongoing.
 
 import from react { useEffect }
 import from .components.Suggestions {
-    ActionStep, OngoingPanel, Suggestion, SuggestionCard, WorkingLabel,
-    demo_suggestions
+    OngoingPanel, SuggestionCard, WorkingLabel
 }
 
 sv import from .core.commons { me, update_profile }
@@ -18,7 +17,81 @@ sv import from .core.graph {
 sv import from .core.walkers { AnswerWalker, FulfillmentWalker, IntakeWalker }
 
 
+# Client constructors. Same shape as components/Suggestions.jac — that module
+# does not re-export its objs, and `new Suggestion` must resolve in this file.
+obj ActionStep {
+    has text: str;
+    has link: str = "";
+    has link_label: str = "";
+    has label: str = "";
+    has required: bool = False;
+}
+
+
+obj Suggestion {
+    has id: str;
+    has name: str;
+    has description: str = "";
+    has steps: list[ActionStep] = [];
+    has kind: str = "program";
+    has badge: str = "";
+}
+
+
 glob EXAMPLE: str = "I need food for me and my two kids this week. I lost my ID when we left the apartment, I don't have a car, and where we're staying has no stove. We also got an eviction notice for the room we're in. Zip is 94110.";
+
+
+def demo_suggestions -> list[Suggestion] {
+    return [
+        Suggestion(
+            id="demo-senior-food",
+            name="Second Harvest Senior Food Assistance",
+            description="Monthly food box for adults 60+. Delivery available in your ZIP if you cannot travel.",
+            steps=[
+                ActionStep(
+                    text="Use this link to apply for assistance. Required documents: ID",
+                    link="https://example.com/second-harvest/senior",
+                    link_label="Apply online"
+                ),
+                ActionStep(
+                    text="Call if you need help filling the form.",
+                    link="tel:5550100200",
+                    link_label="(555) 010-0200"
+                )
+            ]
+        ),
+        Suggestion(
+            id="demo-id-replace",
+            name="County ID Replacement Desk",
+            description="Same-day temporary ID if you lost yours. No appointment needed before 2pm.",
+            steps=[
+                ActionStep(
+                    text="Bring any mail with your name on it, or a sworn statement form.",
+                    link="https://example.com/county/id-replace",
+                    link_label="Print the statement form"
+                ),
+                ActionStep(
+                    text="Go to 1 Dr. Carlton B. Goodlett Pl, Window 3. Open Mon–Fri 9–4."
+                )
+            ]
+        ),
+        Suggestion(
+            id="demo-eviction",
+            name="Legal Aid Eviction Defense",
+            description="Free counsel if you have an eviction notice. Same-week intake for active notices.",
+            steps=[
+                ActionStep(
+                    text="Upload your eviction notice and start intake.",
+                    link="https://example.com/legal-aid/intake",
+                    link_label="Start intake"
+                ),
+                ActionStep(
+                    text="Required documents: eviction notice, photo ID if you have one."
+                )
+            ]
+        )
+    ];
+}
 
 
 def sug_id(name: str) -> str {
@@ -176,10 +249,9 @@ def:pub SeekerView(
     has error: str = "";
     has nudge: str = "";
 
-    # The one thing the caseworker agent's research could not settle. It rides on
-    # `strategy[0]`, next to the research that justifies asking it, rather than
-    # coming from a role of its own -- see the README on the question that asks
-    # itself. `answering` is set while the whole pipeline re-runs on the answer.
+    # The one thing the caseworker agent's research could not settle. Pulled from
+    # the board brief's open_question in apply(); not kept as its own board panel.
+    # `answering` is set while the whole pipeline re-runs on the answer.
     has clarify_question: str = "";
     has clarify_why: str = "";
     has clarify_reply: str = "";
@@ -202,6 +274,9 @@ def:pub SeekerView(
     # Blocks FulfillmentWalker polls from restoring a question while an answer
     # is in flight (otherwise Yes/No looks like it did nothing).
     has answering_ref: Ref[bool] = Ref(False);
+    # Keep the chat draft under the user's control — polls must not refill it.
+    has situation_seeded_ref: Ref[bool] = Ref(False);
+    has draft_touched_ref: Ref[bool] = Ref(False);
 
     def apply(board: SeekerBoard) -> int;
     async def refresh -> None;
@@ -330,16 +405,19 @@ def:pub SeekerView(
                 autoCapitalize="off"
                 spellCheck={False}
                 name="bridge-seeker-situation"
-                onChange={lambda (e: ChangeEvent) { situation = e.target.value; }}
+                onChange={lambda (e: ChangeEvent) {
+                    draft_touched_ref.current = True;
+                    situation = e.target.value;
+                }}
             />
 
             <div className="row" style={{"marginTop": "12px"}}>
                 <button className="btn primary" type="button" onClick={submit} disabled={busy}>
                     {if busy {
                         <WorkingLabel key="w" text="Working on request"/>
-                        skip;
+                    } else {
+                        "Send request";
                     }}
-                    Send request
                 </button>
                 <button className="btn ghost sm" type="button" onClick={use_example}>
                     Use demo request
@@ -362,9 +440,9 @@ def:pub SeekerView(
                     <div className="eyebrow">
                         {if answering {
                             <WorkingLabel key="a" text="Working on your answer"/>
-                            skip;
+                        } else {
+                            "One question first";
                         }}
-                        One question first
                     </div>
                     <p style={{"marginTop": "6px"}}>{clarify_question}</p>
                     <p className="small muted">{clarify_why}</p>

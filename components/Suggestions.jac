@@ -43,60 +43,6 @@ def:pub WorkingLabel(text: str) -> JsxElement {
 }
 
 
-"""Build a few fake but realistic program cards for the demo path."""
-def:pub demo_suggestions -> list[Suggestion] {
-    return [
-        Suggestion(
-            id="demo-senior-food",
-            name="Second Harvest Senior Food Assistance",
-            description="Monthly food box for adults 60+. Delivery available in your ZIP if you cannot travel.",
-            steps=[
-                ActionStep(
-                    text="Use this link to apply for assistance. Required documents: ID",
-                    link="https://example.com/second-harvest/senior",
-                    link_label="Apply online"
-                ),
-                ActionStep(
-                    text="Call if you need help filling the form.",
-                    link="tel:5550100200",
-                    link_label="(555) 010-0200"
-                )
-            ]
-        ),
-        Suggestion(
-            id="demo-id-replace",
-            name="County ID Replacement Desk",
-            description="Same-day temporary ID if you lost yours. No appointment needed before 2pm.",
-            steps=[
-                ActionStep(
-                    text="Bring any mail with your name on it, or a sworn statement form.",
-                    link="https://example.com/county/id-replace",
-                    link_label="Print the statement form"
-                ),
-                ActionStep(
-                    text="Go to 1 Dr. Carlton B. Goodlett Pl, Window 3. Open Mon–Fri 9–4."
-                )
-            ]
-        ),
-        Suggestion(
-            id="demo-eviction",
-            name="Legal Aid Eviction Defense",
-            description="Free counsel if you have an eviction notice. Same-week intake for active notices.",
-            steps=[
-                ActionStep(
-                    text="Upload your eviction notice and start intake.",
-                    link="https://example.com/legal-aid/intake",
-                    link_label="Start intake"
-                ),
-                ActionStep(
-                    text="Required documents: eviction notice, photo ID if you have one."
-                )
-            ]
-        )
-    ];
-}
-
-
 def:pub SuggestionCard(
     item: Suggestion,
     onAccept: Callable[[str], None] | None = None,

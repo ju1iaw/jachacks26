@@ -439,33 +439,47 @@ ol.suggest-steps.action-checklist li.complete .step-content > span {
 .seeker-page { padding-top: 8px; }
 .seeker-page {
   --seeker-box: #e1faf5;
-  --seeker-border: #265073;
+  /* Match home directory card borders (soft light edge on teal). */
+  --seeker-border: rgba(255, 255, 255, 0.28);
 }
 .seeker-page .card,
 .seeker-page .ongoing,
-.seeker-page .suggest-card,
-.seeker-page .field {
+.seeker-page .suggest-card {
   background: var(--seeker-box);
   border-color: var(--seeker-border);
 }
 .seeker-page .suggest-card:hover {
+  border-color: rgba(255, 255, 255, 0.45);
+}
+.seeker-page .field {
+  background: #ffffff;
   border-color: var(--seeker-border);
 }
 .seeker-page .field:focus {
-  border-color: var(--seeker-border);
-  box-shadow: 0 0 0 3px rgba(38, 80, 115, 0.18);
+  border-color: rgba(255, 255, 255, 0.55);
+  box-shadow: 0 0 0 3px rgba(255, 255, 255, 0.16);
 }
 .seeker-page .ongoing-count {
   border-color: var(--seeker-border);
 }
 .seeker-page .eligibility-box {
-  background: var(--seeker-box);
+  background: #ffffff;
   border-color: var(--seeker-border);
   box-shadow: none;
 }
 .seeker-page .eligibility-box.editable:focus {
-  border-color: var(--seeker-border);
-  box-shadow: 0 0 0 3px rgba(38, 80, 115, 0.18);
+  border-color: rgba(255, 255, 255, 0.55);
+  box-shadow: 0 0 0 3px rgba(255, 255, 255, 0.16);
+}
+.seeker-page .btn.primary {
+  background: #a2d5ab;
+  border-color: #a2d5ab;
+  color: #244b55;
+}
+.seeker-page .btn.primary:hover {
+  background: #8fc79a;
+  border-color: #8fc79a;
+  color: #244b55;
 }
 .chat-panel, .seeker-chat { max-width: 720px; margin: 0 auto; }
 .chat-heading {
