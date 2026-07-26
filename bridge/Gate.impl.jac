@@ -3,16 +3,46 @@
 impl Gate.do_login -> None {
     ok: bool = False;
     account: AccountView | None = None;
+    clean_login = email.strip();
+    if login_method == "email" {
+        email_parts = clean_login.split("@");
+        if (
+            len(email_parts) != 2
+            or not email_parts[0]
+            or "." not in email_parts[1]
+            or email_parts[1].startswith(".")
+            or email_parts[1].endswith(".")
+            or " " in clean_login
+        ) {
+            error = "Enter a valid email address.";
+            return;
+        }
+    } else {
+        phone_digits = "".join([char for char in clean_login if char.isdigit()]);
+        if len(phone_digits) < 10 or len(phone_digits) > 15 {
+            error = "Enter a valid phone number with 10 to 15 digits.";
+            return;
+        }
+    }
     busy = True;
     error = "";
     try {
-        ok = await jacLogin(email, password);
+        # Jac supports email and username identities. Phone accounts use their
+        # normalized phone number as the username identity.
+        identity_type = "email" if login_method == "email" else "username";
+        phone_login = "".join([char for char in email if char.isdigit()]);
+        identity_value = email.strip().lower() if login_method == "email" else phone_login;
+        ok = await jacLogin({"type": identity_type, "value": identity_value}, password);
     } except Exception {
         ok = False;
     }
     busy = False;
     if not ok {
-        error = "That email and password didn't match an account.";
+        error = (
+            "That phone number and password didn't match an account."
+            if login_method == "phone"
+            else "That email and password didn't match an account."
+        );
         return;
     }
     try {
@@ -36,13 +66,26 @@ impl Gate.do_login -> None {
 impl Gate.finish_signup -> None {
     signup_result: dict | None = None;
     login_ok: bool = False;
-    auth_email = email.strip().lower();
+    clean_identity = email.strip();
+    auth_type = "email" if account_method == "email" else "username";
+    auth_value = (
+        clean_identity.lower()
+        if account_method == "email"
+        else "".join([char for char in clean_identity if char.isdigit()])
+    );
+    auth_identity = {"type": auth_type, "value": auth_value};
     auth_password = password;
     busy = True;
     error = "";
-    if not auth_email or "@" not in auth_email {
+    if account_method == "email" and (not auth_value or "@" not in auth_value) {
         busy = False;
         error = "Enter a valid email so you can sign back in.";
+        stage = "account";
+        return;
+    }
+    if account_method == "phone" and (len(auth_value) < 10 or len(auth_value) > 15) {
+        busy = False;
+        error = "Enter a valid phone number with 10 to 15 digits.";
         stage = "account";
         return;
     }
@@ -53,22 +96,26 @@ impl Gate.finish_signup -> None {
         return;
     }
     try {
-        signup_result = await jacSignup(auth_email, auth_password);
+        signup_result = await jacSignup(auth_identity, auth_password);
         if not signup_result["success"] {
             busy = False;
             # Already registered — try signing in with the same credentials.
             try {
-                login_ok = await jacLogin(auth_email, auth_password);
+                login_ok = await jacLogin(auth_identity, auth_password);
             } except Exception {
                 login_ok = False;
             }
             if not login_ok {
-                error = "That email is already in use, or signup failed. Try signing in, or use a different email.";
+                error = (
+                    "That phone number is already in use, or signup failed. Try signing in, or use a different number."
+                    if account_method == "phone"
+                    else "That email is already in use, or signup failed. Try signing in, or use a different email."
+                );
                 stage = "account";
                 return;
             }
         } else {
-            login_ok = await jacLogin(auth_email, auth_password);
+            login_ok = await jacLogin(auth_identity, auth_password);
         }
     } except Exception {
         login_ok = False;
@@ -80,9 +127,9 @@ impl Gate.finish_signup -> None {
         return;
     }
     try {
-        # Prefer the contact they gave; otherwise store the login email on the profile.
-        method = contact_method if contact_value else "email";
-        value = contact_value if contact_value else auth_email;
+        # Prefer their optional contact; otherwise use the sign-in identity.
+        method = contact_method if contact_value else account_method;
+        value = contact_value if contact_value else clean_identity;
         _ = await choose_role(selected_role, display_name, method, value, location);
         onReady();
     } except Exception as e {
@@ -132,28 +179,79 @@ impl Gate.next_name(e: MouseEvent) -> None {
     }
 }
 
-
 impl Gate.next_account(e: MouseEvent) -> None {
-    addr = email.strip().lower();
-    if not addr or "@" not in addr {
-        error = "Enter a valid email address.";
-        return;
+    clean_identity = email.strip();
+    if account_method == "email" {
+        addr = clean_identity.lower();
+        parts = addr.split("@");
+        if len(parts) != 2 or not parts[0] or "." not in parts[1] or " " in addr {
+            error = "Enter a valid email address.";
+            return;
+        }
+        email = addr;
+    } else {
+        phone_digits = "".join([char for char in clean_identity if char.isdigit()]);
+        if len(phone_digits) < 10 or len(phone_digits) > 15 {
+            error = "Enter a valid phone number with 10 to 15 digits.";
+            return;
+        }
+        email = phone_digits;
     }
     if len(password) < 8 {
         error = "Password needs at least 8 characters.";
         return;
     }
-    email = addr;
     stage = "contact";
-    # Prefill contact email from the login email they just chose.
+    # Prefill contact information from the sign-in identity they just chose.
     if not contact_value.strip() {
-        contact_method = "email";
-        contact_value = addr;
+        contact_method = account_method;
+        contact_value = clean_identity;
     }
     error = "";
 }
 
-impl Gate.next_contact(e: MouseEvent) -> None {
+impl Gate.next_contact -> None {
+    if contact_value.strip() {
+        clean_contact = contact_value.strip();
+        if contact_method == "email" {
+            email_parts = clean_contact.split("@");
+            if (
+                len(email_parts) != 2
+                or not email_parts[0]
+                or "." not in email_parts[1]
+                or email_parts[1].startswith(".")
+                or email_parts[1].endswith(".")
+                or " " in clean_contact
+            ) {
+                error = "Enter a valid email address, or skip for now.";
+                return;
+            }
+        } else {
+            phone_digits = "".join([char for char in clean_contact if char.isdigit()]);
+            if len(phone_digits) < 10 or len(phone_digits) > 15 {
+                error = "Enter a valid phone number with 10 to 15 digits, or skip for now.";
+                return;
+            }
+        }
+        busy = True;
+        exists: bool = False;
+        try {
+            exists = await contact_registered(contact_method, contact_value);
+        } except Exception {
+            busy = False;
+            error = "We couldn’t check that contact right now. Please try again.";
+            return;
+        }
+        busy = False;
+        if exists {
+            login_method = contact_method;
+            email = contact_value;
+            mode = "login";
+            stage = "creds";
+            error = "You already have an account. Sign in below.";
+            return;
+        }
+    }
     stage = "location";
     error = "";
 }
@@ -186,8 +284,54 @@ impl Gate.request_location(e: MouseEvent) -> None {
     );
 }
 
+impl Gate.load_address_suggestions -> None {
+    if len(location.strip()) < 4 or address_valid {
+        return;
+    }
+    query = location.strip();
+    search_sequence.current += 1;
+    request_id = search_sequence.current;
+    searching_address = True;
+    address_error = "";
+    try {
+        results = await suggest_addresses(query);
+        if request_id != search_sequence.current {
+            return;
+        }
+        address_suggestions = results;
+        if len(results) > 0 {
+            address_error = "";
+            map_url = results[0]["map_url"];
+        } else {
+            map_url = "";
+            address_error = "No matching places found. Try adding a city, state, or ZIP.";
+        }
+    } except Exception {
+        if request_id != search_sequence.current {
+            return;
+        }
+        address_suggestions = [];
+        map_url = "";
+        address_error = "Place search is unavailable right now. Try again in a moment.";
+    }
+    if request_id == search_sequence.current {
+        searching_address = False;
+    }
+}
+
+impl Gate.select_address(suggestion: dict[str, str]) -> None {
+    search_sequence.current += 1;
+    location = suggestion["label"];
+    map_url = suggestion["map_url"];
+    address_valid = True;
+    address_error = "";
+    address_suggestions = [];
+}
+
 impl Gate.use_manual_location(e: MouseEvent) -> None {
-    finish_signup();
+    if address_valid {
+        finish_signup();
+    }
 }
 
 impl Gate.skip_location(e: MouseEvent) -> None {

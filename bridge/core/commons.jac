@@ -11,8 +11,10 @@ Two things live here:
     identity (`Person`, `Donor`) never goes here.
 """
 
+import from hashlib { sha256 }
+import requests;
 import from core.graph {
-    Account, Activity, Contribution, Donor, Need, Org, OrgCard, Person,
+    Account, Activity, ContactClaim, Contribution, Donor, Need, Org, OrgCard, Person,
     PledgeCard, Requirement, Seeded, WalkerTrace, AccountView, EngineReport,
     RoutedThrough, Pledges, Requires,
     now_iso
@@ -33,6 +35,100 @@ glob ACTIVITY_CAP: int = 60;
 def _my_account -> Account | None {
     found = [root --> [?:Account]];
     return found[0] if found else None;
+}
+
+def _contact_digest(method: str, value: str) -> str {
+    clean_method = method.strip().lower();
+    clean_value = (
+        "".join([char for char in value if char.isdigit()])
+        if clean_method == "phone"
+        else value.strip().lower()
+    );
+    normalized = clean_method + ":" + clean_value;
+    return sha256(normalized.encode()).hexdigest();
+}
+
+
+"""Check a contact without publishing its raw value to the shared graph."""
+def:pub contact_registered(method: str, value: str) -> bool {
+    if not value.strip() {
+        return False;
+    }
+    needle = _contact_digest(method, value);
+    return bool([root.shared --> [?:ContactClaim, digest == needle]]);
+}
+
+
+def _map_url(lat: float, lon: float) -> str {
+    spread = 0.008;
+    return (
+        "https://www.openstreetmap.org/export/embed.html?bbox="
+        + str(lon - spread) + "%2C" + str(lat - spread) + "%2C"
+        + str(lon + spread) + "%2C" + str(lat + spread)
+        + "&layer=mapnik&marker=" + str(lat) + "%2C" + str(lon)
+    );
+}
+
+
+"""Return map-ready address suggestions from the Photon search service."""
+def:pub suggest_addresses(query: str) -> list[dict[str, str]] {
+    clean = query.strip();
+    if len(clean) < 4 {
+        return [];
+    }
+    try {
+        response = requests.get(
+            "https://photon.komoot.io/api/",
+            params={
+                "q": clean,
+                "limit": 5,
+                "lang": "en"
+            },
+            headers={"User-Agent": "Bridge-Crisis-Navigator/0.1"},
+            timeout=8
+        );
+        response.raise_for_status();
+        features = response.json()["features"] as list[dict[str, any]];
+        suggestions: list[dict[str, str]] = [];
+        for feature in features {
+            props = feature["properties"] as dict[str, any];
+            geometry = feature["geometry"] as dict[str, any];
+            coords = geometry["coordinates"] as list[float];
+            parts: list[str] = [];
+            street = str(props.get("street", ""));
+            number = str(props.get("housenumber", ""));
+            name = str(props.get("name", ""));
+            first: str = (number + " " + street).strip();
+            if not first {
+                first = name;
+            }
+            for part in [
+                first,
+                str(props.get("city", props.get("district", ""))),
+                str(props.get("state", "")),
+                str(props.get("postcode", "")),
+                str(props.get("country", ""))
+            ] {
+                if part and part not in parts {
+                    parts.append(part);
+                }
+            }
+            label = ", ".join(parts);
+            if label and len(coords) >= 2 {
+                lat = float(coords[1]);
+                lon = float(coords[0]);
+                suggestions.append({
+                    "label": label,
+                    "lat": str(lat),
+                    "lon": str(lon),
+                    "map_url": _map_url(lat, lon)
+                });
+            }
+        }
+        return suggestions;
+    } except Exception {
+        return [];
+    }
 }
 
 
@@ -139,6 +235,13 @@ def:protect choose_role(
     acct.contact_method = contact_method;
     acct.contact_value = contact_value;
     acct.location = location;
+    if contact_value.strip() {
+        needle = _contact_digest(contact_method, contact_value);
+        if not [root.shared --> [?:ContactClaim, digest == needle]] {
+            claim = root.shared ++> ContactClaim(digest=needle);
+            grant(claim, level=ReadPerm);
+        }
+    }
     if contact_method == "email" and contact_value {
         acct.email = contact_value;
     }
