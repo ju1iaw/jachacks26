@@ -462,6 +462,24 @@ walker:protect IntakeWalker {
 
         read = read_situation_safe(self.situation);
 
+        # Everything downstream needs `read`, but the audit and the clarifying
+        # question do not need *each other* -- so they go out together, and the
+        # graph work below (minting the Person, retiring stale needs) happens
+        # while both are still in flight.
+        #
+        # Inline `flow` is safe here where the `launch_*` wrappers in
+        # core/reason.jac are required elsewhere: the trap those wrappers exist to
+        # avoid is a comprehension capturing its loop variable by reference, and
+        # these are two distinct calls with no loop. Neither role touches the
+        # graph, which is why this is parallelisable at all -- concurrent graph
+        # writes are what trip the runtime's optimistic-concurrency check.
+        pending_audit = flow audit_anonymization_safe(self.situation, read.anonymized_summary);
+        pending_clarify = flow ask_clarifying_safe(
+            self.situation,
+            ", ".join(read.categories),
+            ", ".join(read.assets) if read.assets else "nothing confirmed"
+        );
+
         person = _my_person();
         if person is None {
             person = root ++> Person(alias=name, situation=self.situation, created_at=now_iso());
@@ -473,18 +491,14 @@ walker:protect IntakeWalker {
                 del stale;
             }
         }
-        # A SECOND model pass audits the first one's anonymization before the
-        # summary is allowed anywhere near the commons. The privacy claim is a
-        # checked invariant, not a promise: whatever the auditor repairs is what
-        # gets published, and what it caught is kept for the record.
-        audit = audit_anonymization_safe(self.situation, read.anonymized_summary);
+        # Collect the two in-flight roles. The audit is a SECOND model pass over
+        # the first one's anonymization, and nothing reaches the commons until it
+        # has run: the privacy claim is a checked invariant, not a promise, so
+        # whatever the auditor repairs is what gets published, and what it caught
+        # is kept for the record.
+        audit = wait pending_audit;
+        clar = wait pending_clarify;
         published = audit.repaired_summary if audit.repaired_summary else read.anonymized_summary;
-
-        clar = ask_clarifying_safe(
-            self.situation,
-            ", ".join(read.categories),
-            ", ".join(read.assets) if read.assets else "nothing confirmed"
-        );
 
         person.alias = name;
         person.situation = self.situation;

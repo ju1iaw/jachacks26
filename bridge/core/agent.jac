@@ -193,7 +193,7 @@ def plan_strategy(
     zip_prefix: str
 ) -> StrategyBrief by llm(
     tools=[survey_orgs, inspect_gate, check_shelf, commons_pressure],
-    max_react_iterations=8,
+    max_react_iterations=4,
     temperature=0.2
 );
 sem plan_strategy = "You are an experienced crisis caseworker. Research this person's options using your tools before you commit to anything: find out what the local organisations in their categories actually require at the door, whether any blocking requirement has a published workaround, and whether the community already has something usable on the shelf. Then produce an ordered strategy whose first step unblocks the most other steps. Do not guess at what organisations require -- look it up.";
