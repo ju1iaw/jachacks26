@@ -47,6 +47,32 @@ test "a ZIP embedded in a longer line is still found" {
 }
 
 
+test "the label the address picker stores resolves to its postcode" {
+    # This is the exact shape core/commons.jac:suggest_addresses builds from a
+    # Photon result, and what Gate.select_address writes into `location`.
+    assert zip_prefix_of(
+        "1245 Valencia Street, San Francisco, California, 94110, United States"
+    ) == "941";
+}
+
+
+test "a 5-digit house number is not mistaken for the ZIP" {
+    # Reading the first digit run instead of the last resolves this to "123",
+    # an area with no seeded organisation in it.
+    assert zip_prefix_of(
+        "12345 Main Street, Oakland, California, 94612, United States"
+    ) == "946";
+}
+
+
+test "a digit run longer than five is skipped, not truncated" {
+    assert zip_prefix_of(
+        "Apt 100000, San Francisco, California, 94110, United States"
+    ) == "941";
+    assert zip_prefix_of("123456") == "";
+}
+
+
 test "a city name with no ZIP is unknown rather than wrong" {
     assert zip_prefix_of("Mission District") == "";
     assert zip_prefix_of("San Francisco") == "";

@@ -101,20 +101,33 @@ def area_for_coords(lat: float, lon: float) -> str {
 }
 
 
-"""The first run of 5+ consecutive digits in a string, as a 3-digit prefix."""
+"""The ZIP in a string, as a 3-digit prefix.
+
+Takes the LAST standalone run of exactly five digits, which is what picks the
+postcode out of the labels `suggest_addresses` builds:
+
+    "1245 Valencia Street, San Francisco, California, 94110, United States"
+
+A house number is a digit run too, so reading the first one resolves 12345 Main
+St to area "123". Photon orders its parts street, city, state, postcode,
+country, so the last one is the ZIP. Runs that are not exactly five digits are
+skipped rather than truncated -- a 6-digit run is not a ZIP, and treating its
+first three as an area is how "Apt 100000" became area "100".
+"""
 def _prefix_from_digits(raw: str) -> str {
+    found = "";
     run = "";
-    for ch in raw {
+    for ch in raw + " " {
         if ch.isdigit() {
             run += ch;
-            if len(run) == 5 {
-                return run[:3];
-            }
         } else {
+            if len(run) == 5 {
+                found = run;
+            }
             run = "";
         }
     }
-    return "";
+    return found[:3] if found else "";
 }
 
 
