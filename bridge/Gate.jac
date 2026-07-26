@@ -17,6 +17,7 @@ def:pub Gate(onReady: Callable[[], None]) -> JsxElement {
     has mode: str = "directory";
     has selected_role: str = "";
     has login_method: str = "email";
+    has account_method: str = "email";
     has email: str = "";
     has password: str = "";
     has display_name: str = "";
@@ -136,18 +137,47 @@ def:pub Gate(onReady: Callable[[], None]) -> JsxElement {
                     {if stage == "account" {
                         <div key="account">
                             <div className="eyebrow">Save your account</div>
-                            <h1>Choose an email and password</h1>
+                            <h1>Choose how you’ll sign in</h1>
                             <p className="muted small" style={{"marginBottom": "14px"}}>
-                                You’ll use these to sign back in later. Different emails create different accounts.
+                                Use an email address or phone number with a password.
                             </p>
-                            <label className="lbl">Email</label>
+                            <div className="contact-tabs" role="tablist" aria-label="Signup method">
+                                <button
+                                    role="tab"
+                                    aria-selected={account_method == "email"}
+                                    className={"contact-tab active" if account_method == "email" else "contact-tab"}
+                                    onClick={lambda {
+                                        account_method = "email";
+                                        email = "";
+                                        error = "";
+                                    }}
+                                >Email</button>
+                                <button
+                                    role="tab"
+                                    aria-selected={account_method == "phone"}
+                                    className={"contact-tab active" if account_method == "phone" else "contact-tab"}
+                                    onClick={lambda {
+                                        account_method = "phone";
+                                        email = "";
+                                        error = "";
+                                    }}
+                                >Phone</button>
+                            </div>
+                            <label className="lbl">
+                                {"Email" if account_method == "email" else "Phone number"}
+                            </label>
                             <input
                                 className="field hero-field"
-                                type="email"
+                                type={"email" if account_method == "email" else "tel"}
                                 value={email}
-                                placeholder="you@example.com"
+                                autocomplete={"email" if account_method == "email" else "tel"}
+                                maxlength={"254" if account_method == "email" else "25"}
+                                placeholder={"you@example.com" if account_method == "email" else "(555) 123-4567"}
                                 autofocus={True}
-                                onChange={lambda (e: ChangeEvent) { email = e.target.value; }}
+                                onChange={lambda (e: ChangeEvent) {
+                                    email = e.target.value;
+                                    error = "";
+                                }}
                             />
                             <label className="lbl" style={{"marginTop": "12px"}}>Password</label>
                             <input

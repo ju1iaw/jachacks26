@@ -66,13 +66,26 @@ impl Gate.do_login -> None {
 impl Gate.finish_signup -> None {
     signup_result: dict | None = None;
     login_ok: bool = False;
-    auth_email = email.strip().lower();
+    clean_identity = email.strip();
+    auth_type = "email" if account_method == "email" else "username";
+    auth_value = (
+        clean_identity.lower()
+        if account_method == "email"
+        else "".join([char for char in clean_identity if char.isdigit()])
+    );
+    auth_identity = {"type": auth_type, "value": auth_value};
     auth_password = password;
     busy = True;
     error = "";
-    if not auth_email or "@" not in auth_email {
+    if account_method == "email" and (not auth_value or "@" not in auth_value) {
         busy = False;
         error = "Enter a valid email so you can sign back in.";
+        stage = "account";
+        return;
+    }
+    if account_method == "phone" and (len(auth_value) < 10 or len(auth_value) > 15) {
+        busy = False;
+        error = "Enter a valid phone number with 10 to 15 digits.";
         stage = "account";
         return;
     }
@@ -83,22 +96,26 @@ impl Gate.finish_signup -> None {
         return;
     }
     try {
-        signup_result = await jacSignup(auth_email, auth_password);
+        signup_result = await jacSignup(auth_identity, auth_password);
         if not signup_result["success"] {
             busy = False;
             # Already registered — try signing in with the same credentials.
             try {
-                login_ok = await jacLogin(auth_email, auth_password);
+                login_ok = await jacLogin(auth_identity, auth_password);
             } except Exception {
                 login_ok = False;
             }
             if not login_ok {
-                error = "That email is already in use, or signup failed. Try signing in, or use a different email.";
+                error = (
+                    "That phone number is already in use, or signup failed. Try signing in, or use a different number."
+                    if account_method == "phone"
+                    else "That email is already in use, or signup failed. Try signing in, or use a different email."
+                );
                 stage = "account";
                 return;
             }
         } else {
-            login_ok = await jacLogin(auth_email, auth_password);
+            login_ok = await jacLogin(auth_identity, auth_password);
         }
     } except Exception {
         login_ok = False;
@@ -110,9 +127,9 @@ impl Gate.finish_signup -> None {
         return;
     }
     try {
-        # Prefer the contact they gave; otherwise store the login email on the profile.
-        method = contact_method if contact_value else "email";
-        value = contact_value if contact_value else auth_email;
+        # Prefer their optional contact; otherwise use the sign-in identity.
+        method = contact_method if contact_value else account_method;
+        value = contact_value if contact_value else clean_identity;
         _ = await choose_role(selected_role, display_name, method, value, location);
         onReady();
     } except Exception as e {
@@ -163,21 +180,32 @@ impl Gate.next_name(e: MouseEvent) -> None {
 }
 
 impl Gate.next_account(e: MouseEvent) -> None {
-    addr = email.strip().lower();
-    if not addr or "@" not in addr {
-        error = "Enter a valid email address.";
-        return;
+    clean_identity = email.strip();
+    if account_method == "email" {
+        addr = clean_identity.lower();
+        parts = addr.split("@");
+        if len(parts) != 2 or not parts[0] or "." not in parts[1] or " " in addr {
+            error = "Enter a valid email address.";
+            return;
+        }
+        email = addr;
+    } else {
+        phone_digits = "".join([char for char in clean_identity if char.isdigit()]);
+        if len(phone_digits) < 10 or len(phone_digits) > 15 {
+            error = "Enter a valid phone number with 10 to 15 digits.";
+            return;
+        }
+        email = phone_digits;
     }
     if len(password) < 8 {
         error = "Password needs at least 8 characters.";
         return;
     }
-    email = addr;
     stage = "contact";
-    # Prefill contact email from the login email they just chose.
+    # Prefill contact information from the sign-in identity they just chose.
     if not contact_value.strip() {
-        contact_method = "email";
-        contact_value = addr;
+        contact_method = account_method;
+        contact_value = clean_identity;
     }
     error = "";
 }
