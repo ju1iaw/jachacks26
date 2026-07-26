@@ -208,19 +208,34 @@ label.lbl { display: block; font-size: 12.5px; color: var(--muted); margin-botto
 .tabs button.on { background: var(--panel-2); color: var(--text); }
 
 .full { width: 100%; margin-top: 16px; }
-.create-account { margin-top: 10px; border-color: var(--muted); }
+.btn.create-account {
+  margin-top: 10px;
+  border-color: #d2aa37;
+  background: #f2d56b;
+  color: var(--text);
+  font-weight: 680;
+}
+.btn.create-account:hover { background: #f7df88; border-color: #c89f2f; }
 .signup-flow h1 { margin: 8px 0 8px; }
 .signup-flow .hero-field { margin-top: 22px; font-size: 16px; padding: 14px 15px; }
 .progress { display: grid; grid-template-columns: repeat(3, 1fr); gap: 7px; margin-bottom: 28px; }
 .progress span { height: 4px; border-radius: 999px; background: var(--line); }
 .progress span.active { background: var(--cool); }
 .progress span.done { background: var(--text); }
-.choice-row { display: grid; grid-template-columns: 1fr 1fr; gap: 9px; margin-top: 22px; }
-.choice {
-  border: 1px solid var(--line); border-radius: 10px; padding: 11px;
-  color: var(--muted); background: var(--panel-2); font-weight: 620;
+.contact-tabs {
+  display: flex; gap: 24px; margin-top: 22px;
+  border-bottom: 1px solid var(--line);
 }
-.choice.active { color: var(--text); border-color: var(--cool); background: rgba(57,174,169,.12); }
+.contact-tab {
+  position: relative; border: 0; background: transparent; color: var(--muted);
+  padding: 8px 2px 10px; font-weight: 620;
+}
+.contact-tab::after {
+  content: ""; position: absolute; left: 0; right: 0; bottom: -1px;
+  height: 2px; background: transparent;
+}
+.contact-tab.active { color: var(--text); }
+.contact-tab.active::after { background: var(--cool); }
 .location-opt {
   display: flex; gap: 13px; width: 100%; text-align: left; align-items: center;
   margin-top: 22px; padding: 15px; color: var(--text); background: var(--panel-2);

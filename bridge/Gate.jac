@@ -74,7 +74,7 @@ def:pub Gate(onReady: Callable[[], None]) -> JsxElement {
 
     return <div className="gate">
         <div style={{"marginBottom": "18px", "justifyContent": "center", "display": "flex"}}>
-            <Brand tagline={"volunteer access" if selected_role == "helper" else "support access"}/>
+            <Brand tagline={"volunteer access" if selected_role == "helper" else ""}/>
         </div>
 
         <div className="card">
@@ -111,10 +111,19 @@ def:pub Gate(onReady: Callable[[], None]) -> JsxElement {
                         <div key="contact">
                             <div className="eyebrow">Stay in touch</div>
                             <h1>What’s the best way to contact you?</h1>
-                            <p className="muted small">This is optional. We’ll only use it for updates you ask for.</p>
-                            <div className="choice-row">
-                                <button className={"choice active" if contact_method == "email" else "choice"} onClick={lambda { contact_method = "email"; contact_value = ""; }}>Email</button>
-                                <button className={"choice active" if contact_method == "phone" else "choice"} onClick={lambda { contact_method = "phone"; contact_value = ""; }}>Phone</button>
+                            <div className="contact-tabs" role="tablist" aria-label="Contact method">
+                                <button
+                                    role="tab"
+                                    aria-selected={contact_method == "email"}
+                                    className={"contact-tab active" if contact_method == "email" else "contact-tab"}
+                                    onClick={lambda { contact_method = "email"; contact_value = ""; }}
+                                >Email</button>
+                                <button
+                                    role="tab"
+                                    aria-selected={contact_method == "phone"}
+                                    className={"contact-tab active" if contact_method == "phone" else "contact-tab"}
+                                    onClick={lambda { contact_method = "phone"; contact_value = ""; }}
+                                >Phone</button>
                             </div>
                             <input
                                 className="field hero-field"
@@ -163,9 +172,9 @@ def:pub Gate(onReady: Callable[[], None]) -> JsxElement {
                     <button className="back-link" onClick={back_to_directory}>
                         ← choose a different path
                     </button>
-                    <div className="eyebrow">
-                        {"Volunteer portal" if selected_role == "helper" else "Your private support space"}
-                    </div>
+                    {if selected_role == "helper" {
+                        <div className="eyebrow" key="portal">Volunteer portal</div>
+                    }}
                     <h1>
                         {"Sign in to help" if selected_role == "helper" else "Sign in to get support"}
                     </h1>
