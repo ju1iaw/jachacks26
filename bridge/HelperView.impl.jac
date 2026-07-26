@@ -1,10 +1,14 @@
 """Handlers for HelperView."""
 
-def clean_error(prefix: str, raw: str) -> str {
-    if "ENGINE_UNAVAILABLE" in raw {
-        return "Bridge has no working model connection right now. Add an API key on the server and try again.";
-    }
-    return prefix + " Try again in a moment.";
+def _ref_offers(ref: Ref[list[OfferView]]) -> list[OfferView] {
+    cur = ref.current;
+    return cur if cur else [];
+}
+
+
+def _ref_ids(ref: Ref[list[str]]) -> list[str] {
+    cur = ref.current;
+    return cur if cur else [];
 }
 
 
@@ -14,106 +18,131 @@ impl HelperView.refresh -> None {
         if result.reports and len(result.reports) > 0 {
             view = result.reports[0];
             needs = view.needs;
-            pledges = view.pledges;
             orgs = view.orgs;
-            activity = view.activity;
-            open_count = view.open_count;
-            matched_count = view.matched_count;
-            fulfilled_count = view.fulfilled_count;
-            engine = view.engine;
-            engine_model = view.engine_model;
-            engine_reason = view.engine_reason;
-            engine_calls = view.engine_calls;
-            engine_roles = view.engine_roles;
-            if not org_id and len(view.orgs) > 0 {
-                org_id = view.orgs[0].org_id;
+
+            # Seed active offers from this helper's live pledges (once per id).
+            known = _ref_ids(known_ref);
+            next_offers = _ref_offers(offers_ref);
+            for p in view.pledges {
+                if not p.mine or p.remaining <= 0 {
+                    continue;
+                }
+                ov = offer_from_pledge(p);
+                if ov.id in known or ov.pledge_id in known {
+                    continue;
+                }
+                next_offers = next_offers + [ov];
+                known = known + [ov.id, ov.pledge_id];
             }
+            offers_ref.current = next_offers;
+            known_ref.current = known;
+            offers = next_offers;
+            past_offers = _ref_offers(past_ref);
         }
     } except Exception {
-        engine = engine;
+        chat_reply = chat_reply;
     }
 }
 
 
-impl HelperView.add_pledge -> None {
-    if not description.strip() or not org_id {
-        flash = "Describe the pledge and pick an org to route it through.";
+impl HelperView.submit_offer -> None {
+    if not offer_text.strip() {
+        error = "Tell Bridge how you can help first.";
         return;
     }
-    busy = "pledge";
-    units: int = 1;
+    busy = True;
+    error = "";
+    chat_reply = "";
+    text = offer_text.strip();
     try {
-        units = int(capacity);
-    } except Exception {
-        units = 1;
-    }
-    try {
-        # PledgeWalker wakes the matcher itself, so by the time this returns the
-        # matching has already happened -- `matched_now` is what it did, read off
-        # the walker rather than out of `reports` (a nested spawn's reports go to
-        # the outer stream, so MatchWalker runs with emit=False in there).
-        result = await root spawn PledgeWalker(
-            kind=kind,
-            description=description,
-            capacity=units,
-            org_id=org_id,
-            notes=notes
-        );
-        hit = result.matched_now;
-        flash = (
-            "On the shelf - and it already matched " + str(hit) + " open need(s)."
-            if hit > 0
-            else "On the shelf. Nothing open fits it right now; it'll be reconsidered the moment something does."
-        );
-        description = "";
-        notes = "";
+        result = await root spawn HelperOfferWalker(text=text);
+        chat_reply = result.reply if result.reply else "Added to your offered services.";
+        known = _ref_ids(known_ref);
+        next_offers = _ref_offers(offers_ref);
+        added = 0;
+        if result.reports {
+            for ov in result.reports {
+                if ov.id in known {
+                    continue;
+                }
+                next_offers = next_offers + [ov];
+                known = known + [ov.id];
+                if ov.pledge_id {
+                    known = known + [ov.pledge_id];
+                }
+                added = added + 1;
+            }
+        }
+        if added == 0 {
+            for d in demo_helper_offers() {
+                if d.id not in known {
+                    next_offers = next_offers + [d];
+                    known = known + [d.id];
+                    added = added + 1;
+                }
+            }
+            if not chat_reply {
+                chat_reply = "Here is an example offer based on what you described.";
+            }
+        }
+        offers_ref.current = next_offers;
+        known_ref.current = known;
+        offers = next_offers;
+        offer_text = "";
+        # Quietly try to match new offers to open needs.
+        try {
+            _ = await root spawn MatchWalker();
+        } except Exception {
+            added = added;
+        }
+        await refresh();
     } except Exception as e {
-        flash = clean_error("Could not add that.", str(e));
+        raw = str(e);
+        if "ENGINE_UNAVAILABLE" in raw {
+            error = "No model connection — showing an example offer you can edit.";
+        } else {
+            error = "Something went wrong — showing an example offer.";
+        }
+        known = _ref_ids(known_ref);
+        next_offers = _ref_offers(offers_ref);
+        for d in demo_helper_offers() {
+            if d.id not in known {
+                next_offers = next_offers + [d];
+                known = known + [d.id];
+            }
+        }
+        offers_ref.current = next_offers;
+        known_ref.current = known;
+        offers = next_offers;
+        chat_reply = "Example offer added on the right — expand it for details.";
     }
-    busy = "";
-    await refresh();
+    busy = False;
 }
 
 
-"""A manual full sweep of the commons.
-
-Matching is autonomous -- needs and pledges each wake the matcher as they land,
-so this button is a backstop, not the mechanism. It exists for the case where a
-match attempt was lost to a provider blip (those are logged in the feed and the
-need stays open), and for re-checking every open need at once after the shelf
-has changed. On a healthy graph it should find nothing left to do.
-"""
-impl HelperView.run_match -> None {
-    busy = "match";
-    try {
-        result = await root spawn MatchWalker();
-        made = len(result.reports) if result.reports else 0;
-        flash = (
-            "Swept the commons - matched " + str(made) + " need(s) the triggers had missed."
-            if made > 0
-            else "Swept every open need - nothing left for it to do."
-        );
-    } except Exception as e {
-        flash = clean_error("Matcher failed.", str(e));
+impl HelperView.remove_offer(oid: str) -> None {
+    cur = _ref_offers(offers_ref);
+    moved = [o for o in cur if o.id == oid];
+    next_offers = [o for o in cur if o.id != oid];
+    offers_ref.current = next_offers;
+    offers = next_offers;
+    if len(moved) == 0 {
+        return;
     }
-    busy = "";
-    await refresh();
+    next_past = _ref_offers(past_ref) + moved;
+    past_ref.current = next_past;
+    past_offers = next_past;
+    pid = moved[0].pledge_id;
+    if pid {
+        try {
+            _ = await root spawn RetirePledgeWalker(pledge_id=pid);
+        } except Exception {
+            pid = pid;
+        }
+    }
 }
 
 
-impl HelperView.run_followup -> None {
-    busy = "follow";
-    try {
-        result = await root spawn FollowUpWalker(simulate_hours=48);
-        made = len(result.reports) if result.reports else 0;
-        flash = (
-            "Escalated " + str(made) + " unfilled need(s) to a wider radius."
-            if made > 0
-            else "Nothing has been sitting unfilled long enough to escalate."
-        );
-    } except Exception as e {
-        flash = clean_error("Follow-up failed.", str(e));
-    }
-    busy = "";
-    await refresh();
+impl HelperView.toggle_past -> None {
+    show_past = not show_past;
 }

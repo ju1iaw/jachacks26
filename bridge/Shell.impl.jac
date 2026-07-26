@@ -14,7 +14,10 @@ impl Shell.load -> None {
             display_name = account.display_name;
             contact_method = account.contact_method;
             contact_value = account.contact_value;
+            email = account.email;
+            phone = account.phone;
             location = account.location;
+            eligibility_notes = account.eligibility_notes;
         }
     } except Exception {
         role = "";
@@ -29,7 +32,10 @@ impl Shell.sign_out(e: MouseEvent) -> None {
     display_name = "";
     contact_method = "";
     contact_value = "";
+    email = "";
+    phone = "";
     location = "";
+    eligibility_notes = "";
     signed_in = False;
     ready = True;
     seeker_panel = "home";

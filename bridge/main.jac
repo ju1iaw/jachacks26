@@ -11,14 +11,15 @@ no client has any reason to hit.
     jac start --dev main.jac        # http://localhost:8000
 """
 
-import from core.commons { bootstrap, choose_role, me }
+import from core.commons { bootstrap, choose_role, me, update_profile }
 import from core.graph {
-    AccountView, CommunityView, EngineReport, NeedCard, OrgCard, PlanStep,
-    PledgeCard, SeekerBoard, StrategyView, WalkerTrace
+    AccountView, CommunityView, EngineReport, NeedCard, OfferView, OrgCard,
+    PlanStep, PledgeCard, SeekerBoard, StrategyView, WalkerTrace
 }
 import from core.walkers {
     AnswerWalker, CommunityBoard, FollowUpWalker, FulfillmentWalker,
-    IntakeWalker, MatchWalker, PledgeWalker
+    HelperOfferWalker, IntakeWalker, MatchWalker, PledgeWalker,
+    RetirePledgeWalker
 }
 import from core.reason { ensure_engine }
 

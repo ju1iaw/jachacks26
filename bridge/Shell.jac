@@ -15,7 +15,10 @@ def:pub Shell -> JsxElement {
     has display_name: str = "";
     has contact_method: str = "";
     has contact_value: str = "";
+    has email: str = "";
+    has phone: str = "";
     has location: str = "";
+    has eligibility_notes: str = "";
     has ready: bool = False;
     has signed_in: bool = False;
     has seeker_panel: str = "home";
@@ -45,13 +48,13 @@ def:pub Shell -> JsxElement {
             <div className="topbar seeker-topbar">
                 <div className="icon-group">
                     <button
-                        className={"icon-btn" + (" on" if seeker_panel == "settings" else "")}
+                        className={"icon-btn settings" + (" on" if seeker_panel == "settings" else "")}
                         type="button"
                         title="Settings"
                         aria-label="Settings"
                         onClick={open_settings}
                     >
-                        <span className="icon-glyph" aria-hidden="true">⚙</span>
+                        <span className="icon-glyph settings" aria-hidden="true">⚙</span>
                     </button>
                     <button
                         className="icon-btn"
@@ -65,7 +68,7 @@ def:pub Shell -> JsxElement {
                 </div>
 
                 <div className="spacer"></div>
-                <Brand tagline="you need help"/>
+                <Brand tagline="get support"/>
                 <div className="spacer"></div>
 
                 <button
@@ -81,18 +84,20 @@ def:pub Shell -> JsxElement {
             <SeekerView
                 key="s"
                 display_name={display_name}
-                contact_method={contact_method}
-                contact_value={contact_value}
+                email={email}
+                phone={phone}
                 location={location}
+                eligibility_notes={eligibility_notes}
                 panel={seeker_panel}
                 onHome={go_home}
+                onProfileSaved={load}
             />
         </div>;
     }
 
     return <div>
         <div className="topbar">
-            <Brand tagline="you are helping"/>
+            <Brand tagline="help your community"/>
             <div className="spacer"></div>
             <Pill text={"volunteer · " + display_name} tone="cool"/>
             <button className="btn ghost sm" onClick={sign_out}>Sign out</button>

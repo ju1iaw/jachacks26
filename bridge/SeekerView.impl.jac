@@ -26,17 +26,20 @@ impl SeekerView.apply(board: SeekerBoard) -> int {
 
     # The question comes off the agent's brief rather than a role of its own, so
     # it is only ever asked when the research that justifies it found something.
-    # Clearing it when the brief has none is what closes the card after an answer.
-    asked = "";
-    why = "";
-    for brief in board.strategy {
-        if brief.open_question {
-            asked = brief.open_question;
-            why = brief.question_why;
+    # Skip while an answer is in flight so the 3s poll cannot restore the card.
+    answering = True if answering_ref.current else False;
+    if not answering {
+        asked = "";
+        why = "";
+        for brief in board.strategy {
+            if brief.open_question {
+                asked = brief.open_question;
+                why = brief.question_why;
+            }
         }
+        clarify_question = asked;
+        clarify_why = why;
     }
-    clarify_question = asked;
-    clarify_why = why;
 
     if board.situation and not situation {
         situation = board.situation;
@@ -252,6 +255,7 @@ impl SeekerView.apply_clarify(ans: str) -> None {
     }
     asked = clarify_question;
     answering = True;
+    answering_ref.current = True;
     error = "";
     # Close the card straight away -- the re-plan takes a few seconds and the
     # question it was asking has already been answered.
@@ -271,5 +275,83 @@ impl SeekerView.apply_clarify(ans: str) -> None {
             error = "Could not record that answer. Try again in a moment.";
         }
     }
+    answering_ref.current = False;
     answering = False;
+}
+
+
+impl SeekerView.open_settings_form -> None {
+    draft_name = display_name;
+    draft_email = email;
+    draft_phone = phone;
+    draft_location = location;
+    draft_notes = eligibility_notes;
+    settings_msg = "";
+    settings_err = "";
+    try {
+        account = await me();
+        if account is not None {
+            draft_name = account.display_name if account.display_name else draft_name;
+            draft_email = account.email if account.email else draft_email;
+            draft_phone = account.phone if account.phone else draft_phone;
+            draft_location = account.location if account.location else draft_location;
+            draft_notes = account.eligibility_notes if account.eligibility_notes else draft_notes;
+        }
+    } except Exception {
+        # Props are enough to edit offline of a failed refresh.
+        settings_err = "";
+    }
+}
+
+
+impl SeekerView.save_settings -> None {
+    if not draft_name.strip() {
+        settings_err = "Name can’t be empty.";
+        settings_msg = "";
+        return;
+    }
+    settings_busy = True;
+    settings_err = "";
+    settings_msg = "";
+    try {
+        _ = await update_profile(
+            draft_name.strip(),
+            draft_email.strip(),
+            draft_phone.strip(),
+            draft_location.strip(),
+            draft_notes
+        );
+        settings_msg = "Saved.";
+        if onProfileSaved {
+            onProfileSaved();
+        }
+    } except Exception as e {
+        settings_err = "Could not save: " + str(e);
+    }
+    settings_busy = False;
+}
+
+
+impl SeekerView.set_draft_name(e: ChangeEvent) -> None {
+    draft_name = e.target.value;
+}
+
+
+impl SeekerView.set_draft_email(e: ChangeEvent) -> None {
+    draft_email = e.target.value;
+}
+
+
+impl SeekerView.set_draft_phone(e: ChangeEvent) -> None {
+    draft_phone = e.target.value;
+}
+
+
+impl SeekerView.set_draft_location(e: ChangeEvent) -> None {
+    draft_location = e.target.value;
+}
+
+
+impl SeekerView.set_draft_notes(e: ChangeEvent) -> None {
+    draft_notes = e.target.value;
 }

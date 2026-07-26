@@ -36,7 +36,12 @@ node Account {
     has display_name: str;
     has contact_method: str = "";
     has contact_value: str = "";
+    has email: str = "";
+    has phone: str = "";
     has location: str = "";
+    # Eligibility-relevant facts pulled from intake prompts (age, children,
+    # employment, etc.). Editable in Settings so the person can correct them.
+    has eligibility_notes: str = "";
 }
 
 
@@ -319,6 +324,19 @@ obj PledgeCard {
 }
 
 
+obj OfferView {
+    """A helper-facing expandable offer card (active or past)."""
+
+    has id: str;
+    has name: str;
+    has kind: str = "time";
+    has description: str = "";
+    has details: list[str] = [];
+    has notes: str = "";
+    has pledge_id: str = "";
+}
+
+
 obj OrgCard {
     has org_id: str;
     has name: str;
@@ -375,7 +393,10 @@ obj AccountView {
     has engine_roles: list[str] = [];
     has contact_method: str = "";
     has contact_value: str = "";
+    has email: str = "";
+    has phone: str = "";
     has location: str = "";
+    has eligibility_notes: str = "";
 }
 
 
