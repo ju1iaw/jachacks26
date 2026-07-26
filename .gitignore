@@ -1,5 +1,12 @@
-# Jac build + persistence artifacts (also ignored inside bridge/)
+# Jac build + persistence artifacts
 .jac/
 
 # Never commit real API keys
 .env
+
+# Build output and caches
+node_modules/
+dist/
+__pycache__/
+*.pyc
+.pytest_cache/

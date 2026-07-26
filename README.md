@@ -10,7 +10,6 @@ someone who can give it. Built entirely in [Jac](https://docs.jaseci.org/).
 ## Run it
 
 ```bash
-cd bridge
 ./scripts/reset.sh          # wipes the graph, starts the server, seeds demo accounts
 open http://localhost:8000
 ```
