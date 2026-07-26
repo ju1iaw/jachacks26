@@ -108,6 +108,52 @@ test "the privacy auditor's repaired summary is what gets returned" {
 }
 
 
+test "audit drops a 'leak' it left in the published summary" {
+    _reset_engine();
+    # The real failure, verbatim from a live run: the auditor reports "Household
+    # of 3" as caught, and keeps it -- because repaired_summary is told to retain
+    # household size. Reporting it would tell the person a fragment was removed
+    # while volunteers can still read it.
+    _use_mock([
+        LeakAudit(
+            safe=False,
+            leaks=["Household of 3", "lost ID"],
+            repaired_summary="Household of 3; no car, no stove access."
+        )
+    ]);
+
+    audit = audit_anonymization_safe(
+        "Maria here, me and my 2 kids, lost ID when we left the apartment.",
+        "Household of 3; no car, no stove access, lost ID."
+    );
+
+    # "lost ID" really is gone from the published text; "Household of 3" is not.
+    assert audit.leaks == ["lost ID"];
+    assert "Household of 3" in audit.repaired_summary;
+    _reset_engine();
+}
+
+
+test "a leak the auditor genuinely removed is still reported" {
+    _reset_engine();
+    _use_mock([
+        LeakAudit(
+            safe=False,
+            leaks=["Maria", "Shotwell St"],
+            repaired_summary="Household of 3; no car, no stove access."
+        )
+    ]);
+
+    audit = audit_anonymization_safe(
+        "Maria on Shotwell St with 2 kids.",
+        "Maria on Shotwell St; household of 3."
+    );
+
+    assert audit.leaks == ["Maria", "Shotwell St"];
+    _reset_engine();
+}
+
+
 test "judge_match clamps the model's unit allocation to what is left" {
     _reset_engine();
     # The model is asked for 8 units when only 3 remain. Trusting it would

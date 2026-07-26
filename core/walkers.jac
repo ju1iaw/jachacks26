@@ -399,6 +399,17 @@ walker:protect NeedBroadcastWalker {
             # has to bump `escalations`, and either can be woken from a session
             # other than this one -- a helper's pledge, or a later escalation.
             grant(need, level=WritePerm);
+            # Granting the NODE is not enough, and the gap is silent. The
+            # `root.shared --> Need` edge is created by whoever is running this
+            # walker, so it belongs to the seeker's own root, and a traversal
+            # starting from `root.shared` in anyone else's session never crosses
+            # it. The Need is then perfectly readable and completely unreachable:
+            # `CommunityBoard` returned zero needs while three sat open on the
+            # commons, so the whole volunteer side saw an empty board and no
+            # pledge could ever be matched to anything.
+            for e in [edge root.shared --> need] {
+                grant(e, level=WritePerm);
+            }
             person +>:HasNeed:+> need;
             self.created += 1;
 
