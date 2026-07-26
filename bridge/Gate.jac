@@ -41,6 +41,7 @@ def:pub Gate(onReady: Callable[[], None]) -> JsxElement {
     def choose_helper(e: MouseEvent) -> None;
     def back_to_directory(e: MouseEvent) -> None;
     def next_name(e: MouseEvent) -> None;
+    def next_account(e: MouseEvent) -> None;
     async def next_contact -> None;
     def skip_contact(e: MouseEvent) -> None;
     def request_location(e: MouseEvent) -> None;
@@ -64,7 +65,7 @@ def:pub Gate(onReady: Callable[[], None]) -> JsxElement {
         return <div className="directory-page">
             <section className="directory-hero">
                 <img className="directory-logo" src="/assets/bridge-logo.png" alt="Bridge logo"/>
-                <div className="directory-name">Bridge</div>
+                <div className="directory-name brand-name">Bridge</div>
                 <p className="directory-tagline">Nobody has to ask for help alone.</p>
                 <div className="directory-actions">
                     <button className="directory-choice volunteer" onClick={choose_helper}>
@@ -107,6 +108,7 @@ def:pub Gate(onReady: Callable[[], None]) -> JsxElement {
 
                     <div className="progress" aria-label="Signup progress">
                         <span className={"active" if stage == "name" else "done"}></span>
+                        <span className={"active" if stage == "account" else ("done" if stage in ["contact", "location"] else "")}></span>
                         <span className={"active" if stage == "contact" else ("done" if stage == "location" else "")}></span>
                         <span className={"active" if stage == "location" else ""}></span>
                     </div>
@@ -127,6 +129,36 @@ def:pub Gate(onReady: Callable[[], None]) -> JsxElement {
                             </button>
                             <button className="text-btn account-exists" onClick={back_to_login}>
                                 I already have an account
+                            </button>
+                        </div>
+                    }}
+
+                    {if stage == "account" {
+                        <div key="account">
+                            <div className="eyebrow">Save your account</div>
+                            <h1>Choose an email and password</h1>
+                            <p className="muted small" style={{"marginBottom": "14px"}}>
+                                You’ll use these to sign back in later. Different emails create different accounts.
+                            </p>
+                            <label className="lbl">Email</label>
+                            <input
+                                className="field hero-field"
+                                type="email"
+                                value={email}
+                                placeholder="you@example.com"
+                                autofocus={True}
+                                onChange={lambda (e: ChangeEvent) { email = e.target.value; }}
+                            />
+                            <label className="lbl" style={{"marginTop": "12px"}}>Password</label>
+                            <input
+                                className="field hero-field"
+                                type="password"
+                                value={password}
+                                placeholder="At least 8 characters"
+                                onChange={lambda (e: ChangeEvent) { password = e.target.value; }}
+                            />
+                            <button className="btn primary full" onClick={next_account} disabled={busy}>
+                                Continue
                             </button>
                         </div>
                     }}

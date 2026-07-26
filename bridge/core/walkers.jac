@@ -632,6 +632,24 @@ walker:protect IntakeWalker {
         person.anon_audited = True;
         person.anon_leaks = audit.leaks;
 
+        # Keep Settings → Eligibility notes in sync with what intake just learned,
+        # without overwriting notes the person already typed themselves.
+        if acct is not None and not acct.eligibility_notes.strip() {
+            note_bits: list[str] = [];
+            if read.household > 0 {
+                note_bits = note_bits + ["Household: " + str(read.household)];
+            }
+            if read.zip_prefix {
+                note_bits = note_bits + ["ZIP area: " + read.zip_prefix];
+            }
+            if read.assets {
+                note_bits = note_bits + ["Has: " + ", ".join(read.assets)];
+            }
+            if note_bits {
+                acct.eligibility_notes = "\n".join(note_bits);
+            }
+        }
+
         log_walker(
             "IntakeWalker",
             f"read a {read.urgency}-urgency situation -> {', '.join(read.categories)}; anonymized to: \"{published}\""
@@ -955,19 +973,16 @@ walker:protect MatchWalker {
 # ===========================================================================
 
 walker:protect FulfillmentWalker {
-    """Reconcile the person's plan against whatever the graph now says.
+    """Reconcile the person's plan when they accept a helper match.
 
-    The seeker's UI polls this. It is the *only* thing that makes the plan
-    change in real time -- and it works purely by noticing `Matched` edges that
-    some other user's walker attached since the last poll.
-
-    Settling a match invalidates more than the steps. The caseworker's brief was
-    reasoned over a category that was open and a shelf that has since been drawn
-    down, so this walker wakes the agent again on the way out. Same rule as the
-    matcher: the graph event that made the old answer wrong is what triggers the
-    new one, and the person is never asked to press anything.
+    The seeker's UI polls this with an empty `accept_code` to refresh the board
+    without settling anything -- matched helper offers stay visible so the person
+    can Accept them. Passing `accept_code` (a Need.code) settles that one match:
+    covers the matching plan steps, writes the one-line `last_nudge` update, and
+    re-wakes the caseworker around what is left.
     """
 
+    has accept_code: str = "";
     has resolved: list[str] = [];
     has restrategized: bool = False;
     has reports: list[SeekerBoard] = [];
@@ -981,6 +996,10 @@ walker:protect FulfillmentWalker {
     }
 
     can settle with Need entry {
+        # Polls never auto-settle -- the seeker must Accept the helper offer.
+        if not self.accept_code or here.code != self.accept_code {
+            skip;
+        }
         if here.status != "matched" {
             skip;
         }

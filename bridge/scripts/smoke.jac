@@ -189,8 +189,9 @@ with entry:__main__ {
         print(f"     why: {card.match_rationale}");
     }
 
-    line("FulfillmentWalker (back on the seeker's side)");
-    fulfil = root spawn FulfillmentWalker();
+    line("FulfillmentWalker (seeker Accepts the matched need)");
+    accept_code = matcher.reports[0].code if matcher.reports else "";
+    fulfil = root spawn FulfillmentWalker(accept_code=accept_code);
     after = fulfil.reports[0];
     print("nudge:", after.nudge);
     for step in after.steps {

@@ -6,16 +6,13 @@ offers that are not yet redeemed also land under Ongoing.
 """
 
 import from react { useEffect }
-import from .components.Bits {
-    ActivityFeed, AnsweredTrail, PrivacyNote, StrategyCard
-}
 import from .components.Suggestions {
     ActionStep, OngoingPanel, Suggestion, SuggestionCard, demo_suggestions
 }
 
 sv import from .core.commons { me, update_profile }
 sv import from .core.graph {
-    NeedCard, PlanStep, SeekerBoard, StrategyView, WalkerTrace
+    NeedCard, PlanStep, SeekerBoard
 }
 sv import from .core.walkers { AnswerWalker, FulfillmentWalker, IntakeWalker }
 
@@ -44,33 +41,18 @@ def step_to_suggestion(step: PlanStep, qualify: list[PlanStep] = []) -> Suggesti
 
     if blocked {
         for fix in qualify {
-            fix_link = "";
-            fix_link_label = "";
-            if step.org_phone and "call" in fix.detail.lower() {
-                fix_link = "tel:" + step.org_phone.replace(" ", "").replace("-", "");
-                fix_link_label = "Call " + step.org_phone;
-            }
-            steps = steps + [ActionStep(
-                text=fix.detail,
-                link=fix_link,
-                link_label=fix_link_label,
-                label="Do this first",
-                required=True
-            )];
+            label = fix.title[7:] if fix.title.startswith("First: ") else fix.title;
+            steps = steps + [ActionStep(text="To qualify — " + label + ": " + fix.detail)];
         }
         if len(qualify) == 0 {
             # Nothing reasoned for this gate, so fall back to naming it plainly
             # rather than inventing an unblock the model did not produce.
             if step.blocker {
-                steps = steps + [ActionStep(
-                    text="Get or confirm: " + step.blocker + ".",
-                    label="Do this first",
-                    required=True
-                )];
+                steps = steps + [ActionStep(text="To qualify, you still need: " + step.blocker)];
             }
-        # The old card repeated the organisation's address, hours, and notes as
-        # a numbered instruction. The concrete call and visit actions below are
-        # clearer and avoid making background information look like a task.
+        }
+        if step.detail {
+            steps = steps + [ActionStep(text=step.detail)];
         }
     } else {
         primary = step.detail if step.detail else "You look eligible — you can go ahead.";
@@ -85,19 +67,15 @@ def step_to_suggestion(step: PlanStep, qualify: list[PlanStep] = []) -> Suggesti
         steps = steps + [ActionStep(
             text="Call if you need hours or to confirm what to bring.",
             link=link,
-            link_label=link_label,
-            label="Contact the program"
+            link_label=link_label
         )];
     }
     if step.org_address {
-        steps = steps + [ActionStep(
-            text="Go to " + step.org_address + ".",
-            label="When you’re ready"
-        )];
+        steps = steps + [ActionStep(text="Go to " + step.org_address + ".")];
     }
 
     desc = (
-        "This program has a requirement to complete first. Check off each step as you finish it."
+        "You don't qualify yet — follow the steps below, then you can use this program."
         if blocked
         else "You appear eligible for this program."
     );
@@ -111,7 +89,7 @@ def step_to_suggestion(step: PlanStep, qualify: list[PlanStep] = []) -> Suggesti
         description=desc,
         steps=steps,
         kind="blocked" if blocked else "program",
-        badge="steps to qualify" if blocked else "eligible"
+        badge="qualify first" if blocked else "eligible"
     );
 }
 
@@ -166,10 +144,10 @@ def need_to_suggestion(card: NeedCard) -> Suggestion {
         description=card.summary,
         steps=[
             ActionStep(
-                text="A helper has offered to cover this. Confirm once you have received the help."
+                text="A helper has offered to cover this. Accept to track it under Ongoing."
             ),
             ActionStep(
-                text=card.match_rationale if card.match_rationale else "Unconfirmed — still waiting on pickup or delivery."
+                text=card.match_rationale if card.match_rationale else "Waiting on your Accept to confirm this match."
             )
         ],
         kind="helper",
@@ -216,20 +194,6 @@ def:pub SeekerView(
     has settings_err: str = "";
     has settings_busy: bool = False;
 
-    # The agent's brief (0 or 1), the trail of questions already answered, and
-    # what the privacy auditor stripped before anything reached the commons.
-    has strategy: list[StrategyView] = [];
-    has answered: list[str] = [];
-    has privacy_leaks: list[str] = [];
-    has activity: list[WalkerTrace] = [];
-
-    # Engine evidence kept on the board for diagnostics; not shown in the UI.
-    has engine: str = "";
-    has engine_model: str = "";
-    has engine_reason: str = "";
-    has engine_calls: int = 0;
-    has engine_roles: list[str] = [];
-
     # Refs survive the 3s poll closure so Accept/Dismiss are not overwritten.
     has handled_ref: Ref[list[str]] = Ref([]);
     has ongoing_ref: Ref[list[Suggestion]] = Ref([]);
@@ -243,7 +207,7 @@ def:pub SeekerView(
     async def submit -> None;
     async def submit_with(text: str) -> None;
     def use_example(e: MouseEvent) -> None;
-    def accept_item(sid: str) -> None;
+    async def accept_item(sid: str) -> None;
     def dismiss_item(sid: str) -> None;
     def dismiss_ongoing(sid: str) -> None;
     def toggle_ongoing -> None;
@@ -300,13 +264,14 @@ def:pub SeekerView(
                 <div className="card settings-card" style={{"marginTop": "14px"}}>
                     <div className="eyebrow">Eligibility details</div>
                     <p className="small muted" style={{"marginTop": "8px", "marginBottom": "12px"}}>
-                        Filled from your chat requests when relevant — age, children, employment, and similar facts. Edit anything that looks wrong.
+                        Bridge fills this from your chat when it can. Edit freely — your edits are what suggestions use.
                     </p>
+                    <label className="lbl">Your notes</label>
                     <textarea
-                        className="field eligibility-box"
+                        className="field eligibility-box editable"
                         value={draft_notes}
                         onChange={set_draft_notes}
-                        placeholder={"Household: 2 adults, 1 child\nEmployment: looking for work\nMissing: photo ID"}
+                        placeholder="e.g. household size, IDs you have or are missing, employment…"
                     />
                 </div>
 
@@ -391,7 +356,7 @@ def:pub SeekerView(
             {if clarify_question {
                 <div className="card tight" key="q" style={{"marginTop": "14px", "borderColor": "var(--cool)"}}>
                     <div className="eyebrow">
-                        {"Re-reasoning your plan..." if answering else "One thing would change your plan"}
+                        {"Working on your answer..." if answering else "One question first"}
                     </div>
                     <p style={{"marginTop": "6px"}}>{clarify_question}</p>
                     <p className="small muted">{clarify_why}</p>
@@ -417,29 +382,6 @@ def:pub SeekerView(
                     </div>
                 </div>
             }}
-
-            {if len(strategy) > 0 or len(answered) > 0 or len(privacy_leaks) > 0 {
-                <div className="section-title" key="wt">
-                    Why you are seeing this
-                    <span className="hint">
-                        the agent's research, what it stripped, and what you have told it
-                    </span>
-                </div>
-            }}
-            <div className="stack" style={{"gap": "10px"}}>
-                {for (i, brief) in enumerate(strategy) {
-                    <StrategyCard key={"sc" + str(i)} brief={brief}/>
-                }}
-                {if len(answered) > 0 {
-                    <AnsweredTrail key="at" rows={answered}/>
-                }}
-                {if len(privacy_leaks) > 0 {
-                    <PrivacyNote key="pn" leaks={privacy_leaks}/>
-                }}
-                {if len(activity) > 0 {
-                    <ActivityFeed key="af" items={activity}/>
-                }}
-            </div>
         </div>
 
         <div className="seeker-cols" style={{"marginTop": "28px"}}>
