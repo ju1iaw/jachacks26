@@ -7,10 +7,10 @@ share a graph -- fine for exercising the walkers, but the real per-user
 isolation only shows up under `jac start`. See scripts/demo_flow.sh for that.
 """
 
-import from core.commons { choose_role, ensure_commons }
+import from core.commons { choose_role, ensure_commons, engine_report }
 import from core.walkers {
     CommunityBoard, EligibilityPathWalker, FollowUpWalker, FulfillmentWalker,
-    IntakeWalker, MatchWalker, NeedBroadcastWalker, PledgeWalker
+    IntakeWalker, MatchWalker, NeedBroadcastWalker, PledgeWalker, StrategyWalker
 }
 
 
@@ -23,6 +23,18 @@ def line(title: str) {
 with entry:__main__ {
     ensure_commons();
     choose_role("seeker", "Maria");
+
+    line("Engine");
+    rep = engine_report();
+    print(f"mode      : {rep.mode}");
+    print(f"model     : {rep.model}");
+    if rep.reason {
+        print(f"reason    : {rep.reason}");
+    }
+    if rep.mode != "llm" {
+        print("!! byLLM is NOT answering -- every judgement below is a deterministic fallback.");
+        print("!! export OPENAI_API_KEY to switch the real reasoning on.");
+    }
 
     line("IntakeWalker");
     intake = root spawn IntakeWalker(
@@ -41,6 +53,39 @@ with entry:__main__ {
     print("anonymized needs on the commons:");
     for nd in board.needs {
         print(f"  {nd.code} {nd.category} urgency={nd.urgency} -> {nd.summary}");
+    }
+    if board.privacy_leaks {
+        print("privacy auditor caught and repaired before publishing:");
+        for leak in board.privacy_leaks {
+            print(f"  - {leak}");
+        }
+    } else {
+        print("privacy auditor: no identity leaks in the published summary");
+    }
+    if board.clarify_question {
+        print(f"clarifying question: {board.clarify_question}");
+        print(f"               why: {board.clarify_why}");
+    }
+
+    line("StrategyWalker (the ReAct caseworker)");
+    for sv in board.strategy {
+        print(f"headline    : {sv.headline}");
+        print(f"first action: {sv.first_action}");
+        print("ordered plan:");
+        for (i, action) in enumerate(sv.ordered_actions) {
+            print(f"  {i + 1}. {action}");
+        }
+        print(f"community?  : {sv.rely_on_community}");
+        print(f"risk        : {sv.risk}");
+        print(f"note        : {sv.research_note}");
+        print("research path the agent CHOSE to take:");
+        if sv.research_path {
+            for call in sv.research_path {
+                print(f"  - {call}");
+            }
+        } else {
+            print("  (none -- the fallback planner does no research)");
+        }
     }
 
     line("PledgeWalker (the volunteer side)");

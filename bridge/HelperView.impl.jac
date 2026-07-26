@@ -13,6 +13,11 @@ impl HelperView.refresh -> None {
             matched_count = view.matched_count;
             fulfilled_count = view.fulfilled_count;
             engine = view.engine;
+            engine_model = view.engine_model;
+            engine_reason = view.engine_reason;
+            engine_calls = view.engine_calls;
+            engine_fallbacks = view.engine_fallbacks;
+            engine_roles = view.engine_roles;
             if not org_id and len(view.orgs) > 0 {
                 org_id = view.orgs[0].org_id;
             }

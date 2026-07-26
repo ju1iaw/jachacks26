@@ -1,17 +1,24 @@
 """Bridge - the walkers.
 
-Six walkers, distinct jobs, no direct calls between most of them. They
+Seven walkers, distinct jobs, no direct calls between most of them. They
 coordinate by reading and writing the same graph:
 
-    IntakeWalker          person's words  ->  Person node
+    IntakeWalker          person's words  ->  Person node. Runs the intake read,
+      |                   then a second adversarial pass that audits the
+      |                   anonymization before anything reaches the commons.
       |
       +-- EligibilityPathWalker   Root -> Org -> Requirement, reasons at each
       |                           gate, writes a PlanStep per org (blocked ones
       |                           get an unblock step in front of them)
       |
       +-- NeedBroadcastWalker     turns every still-unmet category into an
-                                  anonymized Need on the commons and wires it
-                                  to nearby orgs. The topology IS the message.
+      |                           anonymized Need on the commons and wires it
+      |                           to nearby orgs. The topology IS the message.
+      |
+      +-- StrategyWalker          hands the situation to a ReAct agent holding
+                                  four graph-reading tools and stores both the
+                                  strategy it returns and the research path it
+                                  chose to get there.
 
     MatchWalker           runs in a *different user's session* (the helper's).
                           Walks open Needs, soft-matches donor pledges, writes
@@ -22,26 +29,31 @@ coordinate by reading and writing the same graph:
                           plan, writes the nudge. Neither walker called the
                           other -- they only ever touched the same graph.
 
-    FollowUpWalker        ages open Needs and escalates the broadcast radius on
-                          its own. Its memory is the `escalations` counter that
+    FollowUpWalker        ages open Needs, asks the model *how* to escalate, and
+                          acts on the answer -- widening the radius, rewording
+                          the ask, or opening a second front in another
+                          category. Its memory is the `escalations` counter that
                           survives every restart.
 """
 
 import from core.graph {
-    Activity, Contribution, Donor, Need, NeedCard, Org, Person, PlanStep,
-    Requirement, SeekerBoard, CommunityView,
-    BroadcastTo, HasNeed, HasStep, Matched, Pledges, Requires, RoutedThrough,
+    Activity, CaseStrategy, Contribution, Donor, Need, NeedCard, Org, Person,
+    PlanStep, Requirement, SeekerBoard, CommunityView, StrategyView,
+    BroadcastTo, HasNeed, HasStep, HasStrategy, Matched, Pledges, Requires,
+    RoutedThrough,
     age_hours, age_label, need_code, now_iso, rewind
 }
 import from core.commons {
-    ensure_commons, log_walker, org_cards, orgs_for, pledge_cards,
-    recent_activity, _my_account
+    engine_report, ensure_commons, flush_engine_log, log_walker, org_cards,
+    orgs_for, pledge_cards, recent_activity, _my_account
 }
 import from core.reason {
     EligibilityVerdict, MatchVerdict,
-    engine, launch_match, launch_requirement, next_step_nudge_safe,
-    read_situation_safe
+    ask_clarifying_safe, audit_anonymization_safe, engine,
+    escalation_strategy_safe, launch_match, launch_requirement,
+    next_step_nudge_safe, read_situation_safe
 }
+import from core.agent { drain_tool_trace, plan_strategy_safe }
 
 
 glob CATEGORY_ORDER: list[str] = ["food", "shelter", "legal", "jobs"];
@@ -90,8 +102,25 @@ def _rank(step: PlanStep) -> int {
 }
 
 
+"""Project the ReAct caseworker's stored brief, research path included."""
+def strategy_view(cs: CaseStrategy) -> StrategyView {
+    return StrategyView(
+        headline=cs.headline,
+        first_action=cs.first_action,
+        ordered_actions=cs.ordered_actions,
+        rely_on_community=cs.rely_on_community,
+        risk=cs.risk,
+        research_note=cs.research_note,
+        research_path=cs.research_path,
+        engine=cs.engine,
+        at=cs.at
+    );
+}
+
+
 def build_board(person: Person) -> SeekerBoard {
     steps = sorted([person ->:HasStep:->], key=_rank);
+    rep = engine_report();
     return SeekerBoard(
         person_id=jid(person),
         alias=person.alias,
@@ -101,8 +130,17 @@ def build_board(person: Person) -> SeekerBoard {
         steps=steps,
         needs=[need_card(n) for n in [person ->:HasNeed:->]],
         activity=recent_activity(12),
-        engine=engine(),
-        has_plan=len(steps) > 0
+        engine=rep.mode,
+        has_plan=len(steps) > 0,
+        strategy=[strategy_view(s) for s in [person ->:HasStrategy:->]],
+        clarify_question=person.clarify_question,
+        clarify_why=person.clarify_why,
+        privacy_leaks=person.anon_leaks,
+        engine_model=rep.model,
+        engine_reason=rep.reason,
+        engine_calls=rep.calls,
+        engine_fallbacks=rep.fallbacks,
+        engine_roles=rep.roles
     );
 }
 
@@ -331,7 +369,83 @@ walker:protect NeedBroadcastWalker {
 
 
 # ===========================================================================
-# 3. IntakeWalker  (the front door)
+# 3. StrategyWalker  (the ReAct caseworker)
+# ===========================================================================
+
+walker:protect StrategyWalker {
+    """Run the tool-using caseworker agent, then persist its brief AND its research.
+
+    This is the only walker that does not decide anything itself. It hands the
+    situation to an agent holding four graph-reading tools and lets the agent
+    choose what to investigate. What comes back is stored together with the tool
+    trace, so the plan and the research behind it can be audited side by side.
+    """
+
+    has person_jid: str;
+
+    # A nested spawn's reports flow into the OUTER walker's response stream, not
+    # its own -- so `IntakeWalker` spawns this with `emit=False` and reads the
+    # brief off `self.brief` instead. Left True when called directly as an
+    # endpoint, where the caller does want it in `.reports`.
+    has emit: bool = True;
+    has brief: list[StrategyView] = [];
+    has reports: list[StrategyView] = [];
+
+    can plan with Root entry {
+        person = jobj(self.person_jid);
+        if not isinstance(person, Person) {
+            disengage;
+        }
+
+        # Re-describing your situation re-plans from scratch, same as the steps.
+        for stale in [person ->:HasStrategy:->] {
+            del stale;
+        }
+
+        brief = plan_strategy_safe(
+            person.situation,
+            ", ".join(person.categories),
+            ", ".join(person.assets) if person.assets else "nothing confirmed",
+            person.household,
+            person.zip_prefix
+        );
+
+        # The agent's own research path -- which graph reads it chose, in order.
+        path = drain_tool_trace();
+
+        saved = person +>:HasStrategy:+> CaseStrategy(
+            headline=brief.headline,
+            first_action=brief.first_action,
+            ordered_actions=brief.ordered_actions,
+            rely_on_community=brief.rely_on_community,
+            risk=brief.risk,
+            research_note=brief.research_note,
+            research_path=path,
+            engine=engine(),
+            at=now_iso()
+        );
+
+        log_walker(
+            "StrategyWalker",
+            f"caseworker agent ran {len(path)} graph lookup(s) before committing to a "
+            f"{len(brief.ordered_actions)}-step strategy; first move: \"{brief.first_action}\""
+        );
+        for line in path {
+            log_walker("agent-tool", line);
+        }
+
+        flush_engine_log();
+        view = strategy_view(saved);
+        self.brief.append(view);
+        if self.emit {
+            report view;
+        }
+    }
+}
+
+
+# ===========================================================================
+# 4. IntakeWalker  (the front door)
 # ===========================================================================
 
 walker:protect IntakeWalker {
@@ -359,21 +473,49 @@ walker:protect IntakeWalker {
                 del stale;
             }
         }
+        # A SECOND model pass audits the first one's anonymization before the
+        # summary is allowed anywhere near the commons. The privacy claim is a
+        # checked invariant, not a promise: whatever the auditor repairs is what
+        # gets published, and what it caught is kept for the record.
+        audit = audit_anonymization_safe(self.situation, read.anonymized_summary);
+        published = audit.repaired_summary if audit.repaired_summary else read.anonymized_summary;
+
+        clar = ask_clarifying_safe(
+            self.situation,
+            ", ".join(read.categories),
+            ", ".join(read.assets) if read.assets else "nothing confirmed"
+        );
+
         person.alias = name;
         person.situation = self.situation;
         person.categories = read.categories;
         person.household = read.household;
         person.zip_prefix = read.zip_prefix;
         person.assets = read.assets;
-        person.anon_summary = read.anonymized_summary;
+        person.anon_summary = published;
         person.headline = read.headline;
         person.urgency = read.urgency;
         person.last_nudge = "";
+        person.anon_audited = True;
+        person.anon_leaks = audit.leaks;
+        person.clarify_question = clar.question if clar.needed else "";
+        person.clarify_why = clar.why if clar.needed else "";
 
         log_walker(
             "IntakeWalker",
-            f"read a {read.urgency}-urgency situation -> {', '.join(read.categories)}; anonymized to: \"{read.anonymized_summary}\""
+            f"read a {read.urgency}-urgency situation -> {', '.join(read.categories)}; anonymized to: \"{published}\""
         );
+        if audit.leaks {
+            log_walker(
+                "PrivacyAuditor",
+                f"blocked {len(audit.leaks)} identity leak(s) before publishing: {'; '.join(audit.leaks)}"
+            );
+        } else {
+            log_walker("PrivacyAuditor", "audited the public summary -- no identity leaks found");
+        }
+        if clar.needed {
+            log_walker("IntakeWalker", f"one fact would change the plan, asking: \"{clar.question}\"");
+        }
 
         planner = EligibilityPathWalker(person_jid=jid(person));
         root spawn planner;
@@ -381,13 +523,17 @@ walker:protect IntakeWalker {
         broadcaster = NeedBroadcastWalker(person_jid=jid(person));
         root spawn broadcaster;
 
+        strategist = StrategyWalker(person_jid=jid(person), emit=False);
+        root spawn strategist;
+
+        flush_engine_log();
         report build_board(person);
     }
 }
 
 
 # ===========================================================================
-# 4. MatchWalker  (runs as the helper, never sees a Person)
+# 5. MatchWalker  (runs as the helper, never sees a Person)
 # ===========================================================================
 
 walker:protect MatchWalker {
@@ -491,12 +637,13 @@ walker:protect MatchWalker {
                 f"considered {self.considered} pledge/need pairs, matched none -- nothing on the shelf fits"
             );
         }
+        flush_engine_log();
     }
 }
 
 
 # ===========================================================================
-# 5. FulfillmentWalker  (runs as the seeker, on their poll)
+# 6. FulfillmentWalker  (runs as the seeker, on their poll)
 # ===========================================================================
 
 walker:protect FulfillmentWalker {
@@ -559,19 +706,26 @@ walker:protect FulfillmentWalker {
     }
 
     can wrap with Root exit {
+        flush_engine_log();
         person = _my_person();
         if person is not None {
             report build_board(person);
         } else {
-            # Always report a board -- the intake screen reads `engine` off it
-            # before any Person exists.
+            # Always report a board -- the intake screen reads the engine badge
+            # off it before any Person exists.
+            rep = engine_report();
             report SeekerBoard(
                 person_id="",
                 alias="",
                 headline="",
                 nudge="",
                 activity=recent_activity(12),
-                engine=engine()
+                engine=rep.mode,
+                engine_model=rep.model,
+                engine_reason=rep.reason,
+                engine_calls=rep.calls,
+                engine_fallbacks=rep.fallbacks,
+                engine_roles=rep.roles
             );
         }
     }
@@ -579,22 +733,29 @@ walker:protect FulfillmentWalker {
 
 
 # ===========================================================================
-# 6. FollowUpWalker  (the one with memory)
+# 7. FollowUpWalker  (the one with memory)
 # ===========================================================================
 
 walker:protect FollowUpWalker {
-    """Age open needs and widen their broadcast radius when nothing came back.
+    """Age open needs, then ask the model *how* to escalate and act on the answer.
 
     `escalations` and `broadcast_tier` live on the Need node, so this walker
     behaves differently on its second run than its first -- across processes,
     across restarts, with no scheduler and no external store. That is the whole
     point of running it on a persistent graph.
+
+    The escalation itself is a judgement, not an increment. A shelter need that
+    nobody answered may be better relieved by legal help that stops the eviction
+    than by shouting the same ask at more shelters, and the model is the thing
+    that decides that. The counter is memory; the strategy is reasoning.
     """
 
     has simulate_hours: int = 0;
     has threshold_hours: int = 24;
     has escalated: int = 0;
     has fanout: int = 0;
+    has reworded: int = 0;
+    has second_fronts: int = 0;
     has reports: list[NeedCard] = [];
 
     can begin with Root entry {
@@ -608,38 +769,85 @@ walker:protect FollowUpWalker {
         if self.simulate_hours > 0 {
             here.created_at = rewind(here.created_at, self.simulate_hours);
         }
-        if age_hours(here.created_at) < self.threshold_hours {
+        hours = int(age_hours(here.created_at));
+        if hours < self.threshold_hours {
             skip;
         }
         if here.broadcast_tier >= 3 {
             skip;
         }
 
+        already = [o.name for o in [here ->:BroadcastTo:->]];
+        plan = escalation_strategy_safe(
+            here.summary,
+            here.category,
+            here.urgency,
+            hours,
+            here.escalations,
+            ", ".join(already) if already else "none"
+        );
+
         here.escalations += 1;
-        here.broadcast_tier += 1;
         if here.urgency == "medium" {
             here.urgency = "high";
         } elif here.urgency == "high" {
             here.urgency = "critical";
         }
 
-        already = [o.name for o in [here ->:BroadcastTo:->]];
-        added = 0;
-        for org in orgs_for(here.category, "", here.broadcast_tier) {
-            if org.name in already {
-                continue;
-            }
-            here +>:BroadcastTo(tier=here.broadcast_tier):+> org;
-            added += 1;
+        # Reword the public ask if the model thinks the current phrasing is what
+        # is failing. Still anonymous -- it only ever rewrites the summary that
+        # already passed the privacy auditor.
+        if plan.reword_as {
+            here.summary = plan.reword_as;
+            self.reworded += 1;
         }
+
+        added = 0;
+        if plan.widen_radius {
+            here.broadcast_tier += 1;
+            for org in orgs_for(here.category, "", here.broadcast_tier) {
+                if org.name in already {
+                    continue;
+                }
+                here +>:BroadcastTo(tier=here.broadcast_tier):+> org;
+                added += 1;
+            }
+        }
+
+        # A second front: wire this same need to orgs in a *different* category
+        # that would relieve the same underlying problem.
+        if plan.also_try_category and plan.also_try_category != here.category {
+            for org in orgs_for(plan.also_try_category, "", here.broadcast_tier) {
+                if org.name in already {
+                    continue;
+                }
+                here +>:BroadcastTo(tier=here.broadcast_tier):+> org;
+                added += 1;
+            }
+            self.second_fronts += 1;
+        }
+
         self.escalated += 1;
         self.fanout += added;
 
-        log_walker(
-            "FollowUpWalker",
-            f"{here.code} unfilled after {int(age_hours(here.created_at))}h (escalation #{here.escalations}) -> radius widened to tier {here.broadcast_tier}, +{added} org(s)"
+        detail = (
+            f"{here.code} unfilled after {hours}h (escalation #{here.escalations}) -> "
+            f"{'radius widened to tier ' + str(here.broadcast_tier) if plan.widen_radius else 'radius held'}, "
+            f"+{added} org(s)"
         );
+        if plan.also_try_category {
+            detail += f"; opened a second front in {plan.also_try_category}";
+        }
+        if plan.reword_as {
+            detail += "; reworded the public ask";
+        }
+        log_walker("FollowUpWalker", detail);
+        log_walker("FollowUpWalker", f"reasoning: {plan.reasoning}");
         report need_card(here);
+    }
+
+    can wrap with Root exit {
+        flush_engine_log();
     }
 }
 
@@ -656,6 +864,7 @@ walker:protect CommunityBoard {
     can build with Root entry {
         ensure_commons();
         acct = _my_account();
+        rep = engine_report();
         cards = [need_card(n) for n in [root.shared --> [?:Need]]];
         report CommunityView(
             display_name=acct.display_name if acct is not None else "volunteer",
@@ -666,7 +875,12 @@ walker:protect CommunityBoard {
             matched_count=len([c for c in cards if c.status == "matched"]),
             fulfilled_count=len([c for c in cards if c.status == "fulfilled"]),
             activity=recent_activity(14),
-            engine=engine()
+            engine=rep.mode,
+            engine_model=rep.model,
+            engine_reason=rep.reason,
+            engine_calls=rep.calls,
+            engine_fallbacks=rep.fallbacks,
+            engine_roles=rep.roles
         );
     }
 }

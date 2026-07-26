@@ -13,11 +13,13 @@ Two things live here:
 
 import from core.graph {
     Account, Activity, Contribution, Donor, Need, Org, OrgCard, Person,
-    PledgeCard, Requirement, Seeded, WalkerTrace, AccountView,
+    PledgeCard, Requirement, Seeded, WalkerTrace, AccountView, EngineReport,
     RoutedThrough, Pledges, Requires,
     now_iso
 }
-import from core.reason { engine }
+import from core.reason {
+    drain_degrade_log, engine, engine_state, ensure_engine, role_calls
+}
 
 
 glob SEED_VERSION: str = "bridge-2026-07-1";
@@ -34,12 +36,55 @@ def _my_account -> Account | None {
 }
 
 
-def:protect me -> AccountView {
-    acct = _my_account();
-    if acct is None {
-        return AccountView(role="", display_name="", engine=engine());
+"""A display-ready tally of how many times each LLM role has actually fired."""
+def role_tally -> list[str] {
+    return [f"{name} x{count}" for (name, count) in sorted(role_calls().items())];
+}
+
+
+"""What is answering questions right now. Rendered as a badge in both views."""
+def engine_report -> EngineReport {
+    st = engine_state();
+    return EngineReport(
+        mode=st.mode,
+        model=st.model,
+        reason=st.reason,
+        calls=st.calls,
+        failures=st.failures,
+        fallbacks=st.fallbacks,
+        roles=role_tally()
+    );
+}
+
+
+"""Drain reason.jac's pending degradation lines into the shared Activity feed.
+
+`reason.jac` cannot import this module (this module imports it), so it buffers
+degradation events in a list and callers move them onto the graph. Any walker
+that touches the model should call this on the way out, so a silent fallback
+becomes a visible line in the UI.
+"""
+def flush_engine_log {
+    for line in drain_degrade_log() {
+        log_walker("engine", line);
     }
-    return AccountView(role=acct.role, display_name=acct.display_name, engine=engine());
+}
+
+
+def:protect me -> AccountView {
+    ensure_engine();
+    rep = engine_report();
+    acct = _my_account();
+    return AccountView(
+        role=acct.role if acct is not None else "",
+        display_name=acct.display_name if acct is not None else "",
+        engine=rep.mode,
+        engine_model=rep.model,
+        engine_reason=rep.reason,
+        engine_calls=rep.calls,
+        engine_fallbacks=rep.fallbacks,
+        engine_roles=rep.roles
+    );
 }
 
 
@@ -57,7 +102,17 @@ def:protect choose_role(role: str, display_name: str) -> AccountView {
     if clean == "helper" and not [root --> [?:Donor]] {
         root ++> Donor(name=display_name);
     }
-    return AccountView(role=acct.role, display_name=acct.display_name, engine=engine());
+    rep = engine_report();
+    return AccountView(
+        role=acct.role,
+        display_name=acct.display_name,
+        engine=rep.mode,
+        engine_model=rep.model,
+        engine_reason=rep.reason,
+        engine_calls=rep.calls,
+        engine_fallbacks=rep.fallbacks,
+        engine_roles=rep.roles
+    );
 }
 
 

@@ -1,31 +1,71 @@
 """Bridge - the reasoning layer.
 
-Three *distinct* LLM roles, deliberately not one prompt reused three times:
+Every judgement Bridge makes about a human being is made by a model, not by a
+keyword table. There are **eight distinct LLM roles** here, deliberately not one
+prompt reused eight times:
 
-  1. `read_situation`     -- turns free text into structured facts AND strips it
-                             down to an anonymized one-liner. The anonymization
-                             itself is a reasoning step, not a regex.
-  2. `judge_requirement`  -- decides whether a specific person's specific
-                             situation satisfies one org's specific eligibility
-                             gate, and if not, what unblocks it.
-  3. `judge_match`        -- soft-matches a live need against a donor pledge on
-                             *fit*, not category equality ("shelf-stable staples"
-                             vs "family of 5, no stove access").
-  4. `next_step_nudge`    -- writes the one line the person actually reads when
-                             their plan changes underneath them.
+  1. `read_situation`      -- free text -> structured facts + an anonymized
+                              one-liner. The anonymization is a reasoning step.
+  2. `audit_anonymization` -- a SECOND model pass that tries to find identity
+                              leaks in role 1's output before it is published to
+                              the commons. The privacy claim is enforced, not
+                              asserted.
+  3. `ask_clarifying`      -- decides whether one missing fact would change the
+                              plan, and asks for exactly that.
+  4. `judge_requirement`   -- does this person's situation clear this org's
+                              specific eligibility gate, and if not, what single
+                              action unblocks it.
+  5. `judge_match`         -- soft-matches a live need against a donor pledge on
+                              *fit*, not category equality.
+  6. `plan_strategy`       -- the ReAct caseworker. Lives in `core/agent.jac`
+                              because its tools traverse the graph.
+  7. `escalation_strategy` -- when a need goes unanswered, reasons about *how*
+                              to widen the ask, not just how far.
+  8. `next_step_nudge`     -- the one line the person actually reads when their
+                              plan changes underneath them.
 
-Every one of them is paired with a deterministic fallback. If no model is
-configured -- or the model errors mid-demo -- Bridge degrades to heuristics and
-keeps running instead of dying on stage. `engine()` reports which one is live.
+## Engine honesty
+
+The old version of this file decided whether the model was available by checking
+whether an env var was *set*. That is not the same question as whether the model
+*works*, and it meant a typo'd key silently served regex output that looked like
+reasoning. Now:
+
+  * `ensure_engine()` makes one real structured `by llm()` call at boot and only
+    reports `llm` if the model round-trips a typed object successfully.
+  * every fallback increments a counter, logs loudly, and shows up in the UI as
+    DEGRADED with the actual provider error attached.
+  * `BRIDGE_STRICT_LLM=1` makes the fallbacks *raise* instead of substituting, so
+    there is a mode in which no answer can possibly be heuristic.
+
+The deterministic fallbacks below still exist -- a dead API key should not kill a
+live demo -- but they are an explicitly-labelled degradation, never a peer of the
+model.
 """
 
 import os;
 import re;
+import from jaclang.byllm.lib { Model }
 
 
-# ---------------------------------------------------------------------------
-# Engine availability
-# ---------------------------------------------------------------------------
+# ===========================================================================
+# Engine state
+# ===========================================================================
+
+obj EngineState {
+    """What is actually answering questions right now, and how we know."""
+
+    has mode: str = "unknown";
+    has model: str = "";
+    has reason: str = "";
+    has calls: int = 0;
+    has failures: int = 0;
+    has fallbacks: int = 0;
+    has checked: bool = False;
+}
+
+
+glob ENGINE: EngineState = EngineState();
 
 glob _KEY_VARS: list[str] = [
     "OPENAI_API_KEY",
@@ -35,10 +75,19 @@ glob _KEY_VARS: list[str] = [
     "OLLAMA_HOST"
 ];
 
-glob LLM_ONLINE: bool = False;
+"""Role-by-role call tally. Proof, on stage, that every role really fired."""
+glob ROLE_CALLS: dict[str, int] = {};
+
+"""Degradation events waiting to be written into the shared Activity feed.
+
+`core/commons.jac` imports from this module, so this module cannot import it
+back. Instead walkers drain this list into the graph -- the log surfaces in the
+UI without creating a circular import.
+"""
+glob DEGRADE_LOG: list[str] = [];
 
 
-def detect_llm -> bool {
+def has_key -> bool {
     for var in _KEY_VARS {
         if os.environ.get(var) {
             return True;
@@ -48,25 +97,160 @@ def detect_llm -> bool {
 }
 
 
+def strict_mode -> bool {
+    return os.environ.get("BRIDGE_STRICT_LLM", "") not in ["", "0", "false", "False"];
+}
+
+
+def model_label -> str {
+    override = os.environ.get("BYLLM_DEFAULT_MODEL", "");
+    return override if override else "gpt-4o-mini";
+}
+
+
+"""The model behind every `by llm()` in this file.
+
+Bound explicitly instead of leaning on the ambient `llm` builtin for two
+reasons: `jac.toml`'s `[byllm.model]` default is invisible at the call site, so
+"which model is this?" becomes unanswerable by reading the code; and tests need
+to swap this for a `MockLLM` to exercise the structured-output path without a
+network call. `BYLLM_DEFAULT_MODEL` still overrides it.
+"""
+glob llm: Model = Model(model_name=model_label());
+
+
+def _short(text: str) -> str {
+    flat = " ".join(text.split());
+    return flat if len(flat) <= 160 else flat[:157] + "...";
+}
+
+
+def _push_degrade(where: str, detail: str) {
+    line = f"{where}: {detail}";
+    DEGRADE_LOG.append(line);
+    print(f"[bridge] DEGRADED -- {line}");
+}
+
+
+"""Hand the pending degradation lines to whoever will write them to the graph."""
+def drain_degrade_log -> list[str] {
+    lines = list(DEGRADE_LOG);
+    DEGRADE_LOG.clear();
+    return lines;
+}
+
+
+def _note(role: str) {
+    ENGINE.calls += 1;
+    ROLE_CALLS[role] = ROLE_CALLS.get(role, 0) + 1;
+}
+
+
+def _degrade(role: str, err: str) {
+    ENGINE.failures += 1;
+    ENGINE.mode = "degraded";
+    ENGINE.reason = _short(err);
+    _push_degrade(role, ENGINE.reason);
+}
+
+
+def _fallback_used(role: str) {
+    ENGINE.fallbacks += 1;
+    if strict_mode() {
+        raise RuntimeError(
+            f"BRIDGE_STRICT_LLM is set, so role '{role}' refuses to answer "
+            f"heuristically. Engine is '{ENGINE.mode}': {ENGINE.reason}"
+        );
+    }
+    _push_degrade(role, "answered by deterministic fallback, NOT the model");
+}
+
+
+# ---------------------------------------------------------------------------
+# Preflight -- prove the model works before claiming it does
+# ---------------------------------------------------------------------------
+
+obj Pong {
+    has ok: bool;
+    has model_said: str;
+}
+
+sem Pong = "A connectivity acknowledgement.";
+sem Pong.ok = "Always true.";
+sem Pong.model_said = "The single word 'ready'.";
+
+def _preflight_probe(token: str) -> Pong by llm(temperature=0.0, max_tokens=64);
+sem _preflight_probe = "A connectivity check. Acknowledge that you received the token.";
+sem _preflight_probe.token = "An arbitrary token. Its content does not matter.";
+
+
+"""Decide once, for real, what is answering questions.
+
+A *typed* probe on purpose: it exercises the whole byLLM path -- auth, request,
+schema injection and structured-output parsing -- so a success here means the
+eight real roles will also parse, not just that a socket opened.
+"""
+def ensure_engine -> str {
+    if ENGINE.checked {
+        return ENGINE.mode;
+    }
+    ENGINE.checked = True;
+    ENGINE.model = model_label();
+
+    if not has_key() {
+        ENGINE.mode = "unconfigured";
+        ENGINE.reason = "no model API key in the environment (set OPENAI_API_KEY)";
+        _push_degrade("preflight", ENGINE.reason);
+        return ENGINE.mode;
+    }
+
+    try {
+        probe = _preflight_probe("ping");
+        if probe.ok {
+            ENGINE.mode = "llm";
+            ENGINE.reason = "";
+            _note("preflight");
+            print(f"[bridge] byLLM live on {ENGINE.model} -- structured probe round-tripped");
+        } else {
+            ENGINE.mode = "degraded";
+            ENGINE.reason = "model reachable but returned an unusable probe";
+            _push_degrade("preflight", ENGINE.reason);
+        }
+    } except Exception as e {
+        ENGINE.mode = "degraded";
+        ENGINE.reason = _short(str(e));
+        ENGINE.failures += 1;
+        _push_degrade("preflight", ENGINE.reason);
+    }
+    return ENGINE.mode;
+}
+
+
+def live -> bool {
+    return ensure_engine() == "llm";
+}
+
+
+"""Back-compat string the views already render."""
 def engine -> str {
-    return "llm" if LLM_ONLINE else "heuristic";
+    return ENGINE.mode if ENGINE.checked else ensure_engine();
 }
 
 
-def _degrade(where: str, err: str) {
-    LLM_ONLINE = False;
-    print(f"[bridge] llm call failed in {where} ({err}) -- falling back to heuristics");
+def engine_state -> EngineState {
+    ensure_engine();
+    return ENGINE;
 }
 
 
-with entry {
-    LLM_ONLINE = detect_llm();
+def role_calls -> dict[str, int] {
+    return ROLE_CALLS;
 }
 
 
-# ---------------------------------------------------------------------------
+# ===========================================================================
 # Role 1 - situation intake + anonymization
-# ---------------------------------------------------------------------------
+# ===========================================================================
 
 obj SituationRead {
     has categories: list[str];
@@ -79,7 +263,7 @@ obj SituationRead {
 }
 
 sem SituationRead = "Structured facts pulled out of a person's plain-language description of their crisis.";
-sem SituationRead.categories = "Which kinds of help this person needs. Use only these exact values: 'food', 'shelter', 'legal', 'jobs'. Order by urgency, most urgent first.";
+sem SituationRead.categories = "Which kinds of help this person needs. Use only these exact values: 'food', 'shelter', 'legal', 'jobs'. Order by urgency, most urgent first. Only include a category they actually need -- mentioning they have no car is a constraint, not a request for shelter.";
 sem SituationRead.urgency = "How fast this must be solved. Exactly one of: 'critical' (today/tonight), 'high' (this week), 'medium' (this month), 'low'.";
 sem SituationRead.household = "How many people are being fed or housed, including the person themself. Default to 1 if not stated.";
 sem SituationRead.zip_prefix = "The first 3 digits of their ZIP code if mentioned, otherwise an empty string. Never the full ZIP.";
@@ -92,9 +276,52 @@ sem read_situation = "Read a person's plain-language description of an acute cri
 sem read_situation.text = "What the person typed, verbatim.";
 
 
-# ---------------------------------------------------------------------------
-# Role 2 - eligibility reasoning
-# ---------------------------------------------------------------------------
+# ===========================================================================
+# Role 2 - the privacy auditor (a second, adversarial pass)
+# ===========================================================================
+
+obj LeakAudit {
+    has safe: bool;
+    has leaks: list[str];
+    has repaired_summary: str;
+}
+
+sem LeakAudit = "The result of auditing a supposedly-anonymized summary for anything that could identify a specific person.";
+sem LeakAudit.safe = "True only if the summary contains nothing that could help identify the person: no names, street addresses, full ZIPs, phone numbers, employers, schools, or unusually specific details.";
+sem LeakAudit.leaks = "Each specific fragment of the summary that leaks identity. Empty when safe.";
+sem LeakAudit.repaired_summary = "The summary rewritten to remove every leak while keeping the practical household constraints that matter for matching (household size, no transport, no cooking facilities, missing documents). If already safe, return it unchanged.";
+
+def audit_anonymization(original_text: str, proposed_summary: str) -> LeakAudit by llm(temperature=0.0);
+sem audit_anonymization = "You are a privacy auditor. Given what a person originally wrote and a summary that is about to be published publicly to strangers, find anything in the summary that could identify them, and repair it. Be adversarial: assume the summary writer was careless.";
+sem audit_anonymization.original_text = "What the person originally typed, which contains identifying details.";
+sem audit_anonymization.proposed_summary = "The summary about to be shown publicly. Audit THIS, not the original.";
+
+
+# ===========================================================================
+# Role 3 - the clarifying question
+# ===========================================================================
+
+obj Clarification {
+    has needed: bool;
+    has question: str;
+    has why: str;
+}
+
+sem Clarification = "A decision about whether one more fact is worth asking for before building a plan.";
+sem Clarification.needed = "True only if a single missing fact would materially change which organisations this person should be sent to. False if the plan is already actionable -- someone in crisis should not be interrogated.";
+sem Clarification.question = "The one question to ask, in plain warm second-person language, under 20 words. Empty when not needed.";
+sem Clarification.why = "One short sentence explaining what the answer would change about the plan. Empty when not needed.";
+
+def ask_clarifying(text: str, known_categories: str, known_assets: str) -> Clarification by llm(temperature=0.2);
+sem ask_clarifying = "Decide whether asking exactly one more question would materially improve this person's plan. Default to NOT asking -- only ask when the answer would change which orgs they are routed to.";
+sem ask_clarifying.text = "What the person said about their situation.";
+sem ask_clarifying.known_categories = "Categories of help already identified, comma-separated.";
+sem ask_clarifying.known_assets = "Documents and resources they already confirmed having, comma-separated.";
+
+
+# ===========================================================================
+# Role 4 - eligibility reasoning
+# ===========================================================================
 
 obj EligibilityVerdict {
     has satisfied: bool;
@@ -122,9 +349,9 @@ sem judge_requirement.requirement_kind = "Category of the requirement: 'document
 sem judge_requirement.workaround = "The known way to satisfy this requirement, if the organisation publishes one.";
 
 
-# ---------------------------------------------------------------------------
-# Role 3 - soft matching (a genuinely different kind of reasoning)
-# ---------------------------------------------------------------------------
+# ===========================================================================
+# Role 5 - soft matching (a genuinely different kind of reasoning)
+# ===========================================================================
 
 obj MatchVerdict {
     has fits: bool;
@@ -158,9 +385,43 @@ sem judge_match.pledge_notes = "Any constraints the donor attached to the pledge
 sem judge_match.remaining_units = "Units of this pledge still unallocated. Allocating more than this is invalid.";
 
 
-# ---------------------------------------------------------------------------
-# Role 4 - plan narration
-# ---------------------------------------------------------------------------
+# ===========================================================================
+# Role 7 - escalation strategy  (role 6, the ReAct planner, is in core/agent.jac)
+# ===========================================================================
+
+obj EscalationPlan {
+    has widen_radius: bool;
+    has reword_as: str;
+    has also_try_category: str;
+    has reasoning: str;
+}
+
+sem EscalationPlan = "A decision about how to get an unanswered need answered, made after it has already sat unfilled.";
+sem EscalationPlan.widen_radius = "True if the need should be broadcast to a wider ring of organisations than it currently reaches.";
+sem EscalationPlan.reword_as = "The anonymized summary rewritten to be more likely to attract a match -- leading with the most actionable constraint. Must stay anonymous and under 20 words. Empty to keep the current wording.";
+sem EscalationPlan.also_try_category = "A second category of help that would relieve the same underlying problem, if one genuinely would. One of 'food', 'shelter', 'legal', 'jobs', or empty. E.g. an unanswered shelter need may be relieved by legal help that stops the eviction.";
+sem EscalationPlan.reasoning = "One sentence for the org's records on why this escalation is the right move now.";
+
+def escalation_strategy(
+    summary: str,
+    category: str,
+    urgency: str,
+    hours_open: int,
+    prior_escalations: int,
+    orgs_already_reached: str
+) -> EscalationPlan by llm(temperature=0.3);
+sem escalation_strategy = "A community need has gone unanswered. Decide how to escalate it: widen the broadcast, reword the ask, and/or open a second front in a different category. Escalate harder the longer it has sat and the more times it has already been escalated.";
+sem escalation_strategy.summary = "The current anonymized summary of the need.";
+sem escalation_strategy.category = "The category of help currently being asked for.";
+sem escalation_strategy.urgency = "Current urgency level.";
+sem escalation_strategy.hours_open = "How many hours this need has been open with no match.";
+sem escalation_strategy.prior_escalations = "How many times this need has already been escalated.";
+sem escalation_strategy.orgs_already_reached = "Names of organisations already reached, comma-separated.";
+
+
+# ===========================================================================
+# Role 8 - plan narration
+# ===========================================================================
 
 def next_step_nudge(resolved: str, next_open_step: str) -> str by llm(temperature=0.5, max_tokens=120);
 sem next_step_nudge = "Write the one-line update a person in crisis sees when part of their plan just got resolved for them. Lead with the good news, then point at exactly one next thing. Warm, plain, under 25 words. No exclamation marks, no 'amazing', no emoji.";
@@ -169,8 +430,15 @@ sem next_step_nudge.next_open_step = "The title of the next still-open step in t
 
 
 # ===========================================================================
-# Deterministic fallbacks -- these keep the demo alive with zero API keys
+# Deterministic fallbacks
 # ===========================================================================
+#
+# These are a LAST RESORT, not a peer of the model. Every one of them runs only
+# after `_fallback_used()` has logged that the model is not answering, and under
+# BRIDGE_STRICT_LLM they never run at all. They exist so a dead key at 3:59pm
+# does not take the whole demo down with it.
+
+glob _CANON: list[str] = ["food", "shelter", "legal", "jobs"];
 
 glob _CATEGORY_WORDS: dict[str, list[str]] = {
     "food": [
@@ -180,7 +448,11 @@ glob _CATEGORY_WORDS: dict[str, list[str]] = {
     "shelter": [
         "evict", "eviction", "evicted", "rent", "homeless", "shelter",
         "housing", "sleep", "sleeping", "landlord", "apartment", "motel",
-        "couch", "car", "utilities", "electricity", "heat"
+        "couch", "utilities", "electricity", "heat",
+        # "car" alone is a constraint ("no car"), not a housing signal -- only
+        # living in one is. Matching bare "car" used to rank a food emergency as
+        # shelter-first.
+        "in my car", "in the car", "living in my car", "sleeping in my car"
     ],
     "legal": [
         "legal", "lawyer", "attorney", "court", "hearing", "notice", "sued",
@@ -243,6 +515,11 @@ def _negated_near(text: str, phrase: str) -> bool {
 }
 
 
+def _canon_rank(cat: str) -> int {
+    return _CANON.index(cat) if cat in _CANON else len(_CANON);
+}
+
+
 def heuristic_read(text: str) -> SituationRead {
     low = text.lower();
 
@@ -253,7 +530,13 @@ def heuristic_read(text: str) -> SituationRead {
             scored.append([hits, cat]);
         }
     }
-    scored.sort(reverse=True);
+    # Most hits first, ties broken by canonical need order (food, shelter,
+    # legal, jobs). The old `sort(reverse=True)` broke ties reverse-
+    # alphabetically, which ranked "shelter" above "food" on an equal score and
+    # greeted a food emergency with "let's get you a safe place to stay".
+    scored.sort(key=lambda (row: list) -> list {
+        return [-(row[0] as int), _canon_rank(row[1] as str)];
+    });
     categories = [row[1] as str for row in scored];
     if not categories {
         categories = ["food"];
@@ -324,6 +607,60 @@ def heuristic_read(text: str) -> SituationRead {
         anonymized_summary=summary,
         headline=f"Let's get you {wants}. Here is the fastest path from where you are."
     );
+}
+
+
+glob _LEAK_PATTERNS: list[list[str]] = [
+    ["phone number", r"\b\d{3}[-.\s]?\d{3}[-.\s]?\d{4}\b"],
+    ["full ZIP", r"\b\d{5}\b"],
+    ["street address", r"\b\d{2,6}\s+[A-Z][a-z]+\s+(St|Street|Ave|Avenue|Rd|Road|Blvd|Way|Dr|Drive)\b"],
+    ["email address", r"\b[\w.]+@[\w.]+\b"]
+];
+
+
+def heuristic_audit(original_text: str, proposed_summary: str) -> LeakAudit {
+    leaks: list[str] = [];
+    repaired = proposed_summary;
+    for pair in _LEAK_PATTERNS {
+        hit = re.search(pair[1], repaired);
+        if hit {
+            leaks.append(f"{pair[0]}: {hit.group(0)}");
+            repaired = repaired.replace(hit.group(0), "[redacted]");
+        }
+    }
+    # Any capitalised word from the original that survived into the summary and
+    # is not a known constraint word is treated as a possible name.
+    safe_words = [
+        "Household", "One", "No", "Needs", "Family", "Adult", "Adults",
+        "Children", "Child", "Kids"
+    ];
+    for token in re.findall(r"\b[A-Z][a-z]{2,}\b", proposed_summary) {
+        if token not in safe_words and token in original_text {
+            leaks.append(f"possible name: {token}");
+            repaired = repaired.replace(token, "[redacted]");
+        }
+    }
+    return LeakAudit(safe=not leaks, leaks=leaks, repaired_summary=repaired);
+}
+
+
+def heuristic_clarify(text: str, known_categories: str, known_assets: str) -> Clarification {
+    low = text.lower();
+    if "food" in known_categories and "no way to cook" not in low and "stove" not in low {
+        return Clarification(
+            needed=True,
+            question="Do you have a working stove and fridge where you're staying?",
+            why="It decides whether to send fresh groceries or ready-to-eat meals."
+        );
+    }
+    if not known_assets or known_assets == "nothing confirmed" {
+        return Clarification(
+            needed=True,
+            question="Do you have a photo ID on you right now?",
+            why="Most food banks turn people away at the door without one."
+        );
+    }
+    return Clarification(needed=False, question="", why="");
 }
 
 
@@ -462,6 +799,30 @@ def heuristic_match(
 }
 
 
+def heuristic_escalation(
+    summary: str,
+    category: str,
+    urgency: str,
+    hours_open: int,
+    prior_escalations: int,
+    orgs_already_reached: str
+) -> EscalationPlan {
+    _ = (summary, urgency, orgs_already_reached);
+    second = "";
+    if category == "shelter" and prior_escalations >= 1 {
+        second = "legal";
+    } elif category == "food" and prior_escalations >= 2 {
+        second = "jobs";
+    }
+    return EscalationPlan(
+        widen_radius=True,
+        reword_as="",
+        also_try_category=second,
+        reasoning=f"Unanswered for {hours_open}h after {prior_escalations} escalation(s) -- widening the radius."
+    );
+}
+
+
 def heuristic_nudge(resolved: str, next_open_step: str) -> str {
     if next_open_step {
         return f"Good news -- {resolved} is covered. Next up: {next_open_step}.";
@@ -475,14 +836,44 @@ def heuristic_nudge(resolved: str, next_open_step: str) -> str {
 # ===========================================================================
 
 def read_situation_safe(text: str) -> SituationRead {
-    if LLM_ONLINE {
+    if live() {
         try {
+            _note("read_situation");
             return read_situation(text);
         } except Exception as e {
             _degrade("read_situation", str(e));
         }
     }
+    _fallback_used("read_situation");
     return heuristic_read(text);
+}
+
+
+def audit_anonymization_safe(original_text: str, proposed_summary: str) -> LeakAudit {
+    if live() {
+        try {
+            _note("audit_anonymization");
+            return audit_anonymization(original_text, proposed_summary);
+        } except Exception as e {
+            _degrade("audit_anonymization", str(e));
+        }
+    }
+    _fallback_used("audit_anonymization");
+    return heuristic_audit(original_text, proposed_summary);
+}
+
+
+def ask_clarifying_safe(text: str, known_categories: str, known_assets: str) -> Clarification {
+    if live() {
+        try {
+            _note("ask_clarifying");
+            return ask_clarifying(text, known_categories, known_assets);
+        } except Exception as e {
+            _degrade("ask_clarifying", str(e));
+        }
+    }
+    _fallback_used("ask_clarifying");
+    return heuristic_clarify(text, known_categories, known_assets);
 }
 
 
@@ -493,13 +884,15 @@ def judge_requirement_safe(
     requirement_kind: str,
     workaround: str
 ) -> EligibilityVerdict {
-    if LLM_ONLINE {
+    if live() {
         try {
+            _note("judge_requirement");
             return judge_requirement(situation, assets, requirement, requirement_kind, workaround);
         } except Exception as e {
             _degrade("judge_requirement", str(e));
         }
     }
+    _fallback_used("judge_requirement");
     return heuristic_requirement(situation, assets, requirement, requirement_kind, workaround);
 }
 
@@ -513,8 +906,9 @@ def judge_match_safe(
     pledge_notes: str,
     remaining_units: int
 ) -> MatchVerdict {
-    if LLM_ONLINE {
+    if live() {
         try {
+            _note("judge_match");
             verdict = judge_match(
                 need_summary, need_category, household,
                 pledge_kind, pledge_description, pledge_notes, remaining_units
@@ -525,10 +919,51 @@ def judge_match_safe(
             _degrade("judge_match", str(e));
         }
     }
+    _fallback_used("judge_match");
     return heuristic_match(
         need_summary, need_category, household,
         pledge_kind, pledge_description, pledge_notes, remaining_units
     );
+}
+
+
+def escalation_strategy_safe(
+    summary: str,
+    category: str,
+    urgency: str,
+    hours_open: int,
+    prior_escalations: int,
+    orgs_already_reached: str
+) -> EscalationPlan {
+    if live() {
+        try {
+            _note("escalation_strategy");
+            return escalation_strategy(
+                summary, category, urgency, hours_open,
+                prior_escalations, orgs_already_reached
+            );
+        } except Exception as e {
+            _degrade("escalation_strategy", str(e));
+        }
+    }
+    _fallback_used("escalation_strategy");
+    return heuristic_escalation(
+        summary, category, urgency, hours_open, prior_escalations, orgs_already_reached
+    );
+}
+
+
+def next_step_nudge_safe(resolved: str, next_open_step: str) -> str {
+    if live() {
+        try {
+            _note("next_step_nudge");
+            return next_step_nudge(resolved, next_open_step);
+        } except Exception as e {
+            _degrade("next_step_nudge", str(e));
+        }
+    }
+    _fallback_used("next_step_nudge");
+    return heuristic_nudge(resolved, next_open_step);
 }
 
 
@@ -570,16 +1005,4 @@ def launch_match(
         need_summary, need_category, household,
         pledge_kind, pledge_description, pledge_notes, remaining_units
     );
-}
-
-
-def next_step_nudge_safe(resolved: str, next_open_step: str) -> str {
-    if LLM_ONLINE {
-        try {
-            return next_step_nudge(resolved, next_open_step);
-        } except Exception as e {
-            _degrade("next_step_nudge", str(e));
-        }
-    }
-    return heuristic_nudge(resolved, next_open_step);
 }

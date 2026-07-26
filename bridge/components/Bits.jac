@@ -1,6 +1,6 @@
 """Small presentational pieces shared by both sides of Bridge."""
 
-import from ..core.graph { PlanStep, NeedCard, WalkerTrace }
+import from ..core.graph { PlanStep, NeedCard, StrategyView, WalkerTrace }
 
 
 glob STATUS_PILL: dict[str, str] = {
@@ -118,6 +118,128 @@ def:pub NeedTile(card: NeedCard, action: any = None) -> JsxElement {
         }}
         {if action is not None {
             <div key="a">{action}</div>
+        }}
+    </div>;
+}
+
+
+"""What is actually answering questions, stated plainly.
+
+Deliberately not a decorative "AI powered" chip: when the model is not reachable
+this turns red and says so, and the live call count is the evidence that byLLM
+really is doing the reasoning rather than a keyword table.
+"""
+def:pub EngineBadge(
+    mode: str,
+    model: str,
+    calls: int,
+    fallbacks: int,
+    reason: str,
+    roles: list[str]
+) -> JsxElement {
+    online = mode == "llm";
+    tone = "ok" if online else "danger";
+    label = ("byLLM live - " + model) if online else ("DEGRADED - " + mode);
+    return <div className={"pill " + tone} title={", ".join(roles) if roles else "no model calls yet"}>
+        <span className="dot"></span>
+        <span>{label}</span>
+        {if online {
+            <span key="c" style={{"opacity": "0.75"}}>{"  " + str(calls) + " model calls"}</span>
+        }}
+        {if not online {
+            <span key="f" style={{"opacity": "0.75"}}>
+                {"  " + str(fallbacks) + " heuristic answers" + ("  -  " + reason if reason else "")}
+            </span>
+        }}
+    </div>;
+}
+
+
+"""The ReAct caseworker's brief, with the research it chose to do.
+
+`research_path` is the part worth showing: those lines are the tool calls the
+agent decided to make against the live graph before it committed to an order.
+"""
+def:pub StrategyCard(brief: StrategyView) -> JsxElement {
+    return <div className="card">
+        <div className="row" style={{"justifyContent": "space-between", "alignItems": "flex-start"}}>
+            <div className="eyebrow">Caseworker agent</div>
+            {if brief.rely_on_community {
+                <Pill key="c" text="community can cover this" tone="ok"/>
+            }}
+        </div>
+        <h3 style={{"fontSize": "18px", "margin": "8px 0 10px"}}>{brief.headline}</h3>
+
+        <div className="why">
+            <b>{"Do this first: "}</b>{brief.first_action}
+        </div>
+
+        <div className="eyebrow" style={{"margin": "16px 0 8px"}}>In this order</div>
+        <ol style={{"margin": "0 0 0 18px", "padding": "0"}}>
+            {for (i, action) in enumerate(brief.ordered_actions) {
+                <li key={str(i)} className="small" style={{"marginBottom": "6px"}}>{action}</li>
+            }}
+        </ol>
+
+        {if brief.risk {
+            <p className="small muted" key="r" style={{"marginTop": "12px"}}>
+                <b>{"Most likely to go wrong: "}</b>{brief.risk}
+            </p>
+        }}
+
+        <div className="eyebrow" style={{"margin": "16px 0 8px"}}>
+            Research the agent chose to run
+            <span className="hint">every line is a real read against the live graph</span>
+        </div>
+        {if len(brief.research_path) == 0 {
+            <p className="small muted" key="none">
+                No lookups - this brief came from the deterministic fallback, not the agent.
+            </p>
+        }}
+        <div className="feed">
+            {for (i, call) in enumerate(brief.research_path) {
+                <div className="feed-item" key={str(i)}>
+                    <div className="feed-rail"><span></span></div>
+                    <div className="feed-d" style={{"fontFamily": "ui-monospace, monospace"}}>{call}</div>
+                </div>
+            }}
+        </div>
+
+        {if brief.research_note {
+            <p className="small muted" key="n" style={{"marginTop": "10px"}}>{brief.research_note}</p>
+        }}
+    </div>;
+}
+
+
+"""What the auditor stripped before anything was published.
+
+The claim "no identity crosses the boundary" is worth very little as a sentence
+in a README; this shows the specific fragments a second model pass caught and
+removed from the text volunteers actually see.
+"""
+def:pub PrivacyNote(leaks: list[str]) -> JsxElement {
+    clean = len(leaks) == 0;
+    return <div className="card" style={{"borderColor": "var(--ok)" if clean else "var(--warm)"}}>
+        <div className="row" style={{"justifyContent": "space-between"}}>
+            <div className="eyebrow">Privacy auditor</div>
+            <Pill text={"clean" if clean else str(len(leaks)) + " leak(s) stripped"} tone={"ok" if clean else "warm"}/>
+        </div>
+        {if clean {
+            <p className="small muted" key="c" style={{"marginTop": "8px"}}>
+                A second model pass audited your public summary and found nothing
+                that could identify you.
+            </p>
+        }}
+        {if not clean {
+            <div key="l" style={{"marginTop": "8px"}}>
+                <p className="small muted" style={{"marginBottom": "8px"}}>
+                    Caught and removed before any volunteer could see it:
+                </p>
+                {for (i, leak) in enumerate(leaks) {
+                    <div className="why" key={str(i)} style={{"marginBottom": "6px"}}>{leak}</div>
+                }}
+            </div>
         }}
     </div>;
 }

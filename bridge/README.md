@@ -31,16 +31,29 @@ the REST API as two genuinely different logged-in users.
 ### Turning the LLM on
 
 Bridge ships with deterministic fallbacks for every model call, so it runs end to
-end with **no API key at all** — the badge in the UI reads `reasoning: heuristic`.
-Drop in a key and the same code paths switch to real reasoning:
+end with **no API key at all** — but the badge in the UI turns red and reads
+`DEGRADED`, and every fallback writes a line into the activity feed saying it
+answered *instead of* the model. The fallbacks are a demo safety net, not a peer
+of the model.
 
 ```bash
-cp .env.example .env        # add OPENAI_API_KEY=sk-...
-./scripts/reset.sh          # sources .env, badge flips to `reasoning: llm`
+export OPENAI_API_KEY=sk-...
+jac run scripts/verify_llm.jac     # exercises all 8 roles, fails if any fell back
+./scripts/reset.sh                 # badge flips to `byLLM live - gpt-4o-mini`
 ```
 
-Model is set in `jac.toml` under `[byllm.model]`. Anthropic / Google / Ollama
-work by setting their key instead — see `core/reason.jac`.
+`scripts/verify_llm.jac` is the answer to "is that really the model?" — it runs
+every `by llm()` role once, prints the per-role call tally and the agent's tool
+trace, and **exits non-zero** if anything was served heuristically. Set
+`BRIDGE_STRICT_LLM=1` to make the fallbacks raise at the point of use instead of
+substituting, so no answer can possibly be heuristic.
+
+Note that `jac run` / `jac start` do **not** read `.env` — only
+`scripts/reset.sh` sources it. Export the key in your shell for anything else.
+
+Model is set in `jac.toml` under `[byllm.model]` and bound explicitly as a `glob
+llm` in `core/reason.jac` (which is also what lets the tests swap in a
+`MockLLM`). Anthropic / Google / Ollama work by setting their key instead.
 
 ---
 
@@ -113,9 +126,13 @@ IntakeWalker              the person's words → a Person node
   │                           with `by llm()`, and inserts an unblock step
   │                           directly above each org it blocks on.
   │
-  └─ NeedBroadcastWalker      turns each unmet category into an anonymized Need
-                              on the commons and wires it to nearby orgs.
-                              No push, no queue — the topology IS the message.
+  ├─ NeedBroadcastWalker      turns each unmet category into an anonymized Need
+  │                           on the commons and wires it to nearby orgs.
+  │                           No push, no queue — the topology IS the message.
+  │
+  └─ StrategyWalker           hands the situation to a ReAct agent holding four
+                              graph-reading tools, and stores both the strategy
+                              it returns and the research path it chose.
 
 MatchWalker               runs in the HELPER's session. Walks open needs,
                           soft-matches donor pledges with a second, different
@@ -126,8 +143,10 @@ FulfillmentWalker         runs back in the SEEKER's session on their next poll.
                           Notices the Matched edge that appeared, rewrites the
                           plan, writes the nudge.
 
-FollowUpWalker            ages open needs and widens the broadcast radius on its
-                          own. Its memory is a counter on the Need node.
+FollowUpWalker            ages open needs, then asks the model HOW to escalate —
+                          widen the radius, reword the ask, or open a second
+                          front in another category — and acts on the answer.
+                          Its memory is a counter on the Need node.
 ```
 
 `MatchWalker` and `FulfillmentWalker` never call each other. They run in
@@ -135,17 +154,48 @@ different sessions, in different HTTP requests, as different users. The only
 thing they share is the graph — and that is enough for the seeker's plan to
 rewrite itself seconds after a stranger clicks "match".
 
-### Four distinct `by llm()` roles
+### Eight distinct `by llm()` roles
 
-Not one prompt reused four times — four genuinely different reasoning jobs, each
-with its own `sem` schema (`core/reason.jac`):
+Not one prompt reused eight times — eight genuinely different reasoning jobs, each
+with its own `sem` schema (`core/reason.jac`, plus the ReAct planner in
+`core/agent.jac`):
 
 | function | what it reasons about |
 |---|---|
 | `read_situation` | free text → structured facts, **and the anonymization itself** |
+| `audit_anonymization` | an adversarial second pass that hunts identity leaks in the first one's output and repairs them |
+| `ask_clarifying` | whether one missing fact would change the plan, and what to ask |
 | `judge_requirement` | does *this* person's situation clear *this* org's gate, and what unblocks it |
 | `judge_match` | does this pledge actually *help*, given the household's constraints |
+| `plan_strategy` | **the ReAct agent** — researches the graph with tools, then commits to an ordered strategy |
+| `escalation_strategy` | how to escalate a need nobody answered: wider, reworded, or a second front |
 | `next_step_nudge` | the one line the person reads when their plan changes |
+
+### The privacy claim is checked, not asserted
+
+`read_situation` produces the anonymized summary; `audit_anonymization` is a
+**second model pass whose only job is to catch it lying**. Whatever the auditor
+repairs is what gets published to the commons, and what it caught is stored on the
+`Person` node and rendered in the UI. So the demo shows the specific fragments —
+a name, a street address, a phone number — that were stripped before any
+volunteer could see them.
+
+### The ReAct caseworker
+
+`core/agent.jac` is the one place the model isn't answering a single well-posed
+question. It gets four tools, each a **real graph read**, and decides for itself
+what to investigate before committing to a plan:
+
+| tool | what it reads |
+|---|---|
+| `survey_orgs(category)` | every org in a category and the gates each enforces |
+| `inspect_gate(fragment)` | the published workaround for a blocking requirement |
+| `check_shelf(category)` | what the community has pledged and still has available |
+| `commons_pressure(category)` | how many other needs are competing right now |
+
+Every invocation is recorded and stored on the `CaseStrategy` node, so the UI can
+show the research path the agent *chose* to take — which lookups, in what order,
+and what came back. Change the graph and the plan changes with it.
 
 The matcher is the one to watch. A donor pledges *"40lb of dry rice, beans and
 pasta"*; the need says *"household of 3, no way to cook"*. Same category, exact
@@ -176,15 +226,17 @@ regression tests for exactly this.
 | file | what's in it |
 |---|---|
 | `core/graph.jac` | every node, edge and view model — the privacy boundary is here |
-| `core/reason.jac` | the four `by llm()` roles, their `sem` schemas, and heuristic fallbacks |
-| `core/walkers.jac` | the six walkers |
+| `core/reason.jac` | seven `by llm()` roles, their `sem` schemas, the engine state machine, and the labelled fallbacks |
+| `core/agent.jac` | the ReAct caseworker — the eighth role, plus its four graph-reading tools |
+| `core/walkers.jac` | the seven walkers |
 | `core/commons.jac` | accounts, roles, the shared commons and its seed data |
 | `Shell/Gate/SeekerView/HelperView.jac` | the client, also Jac (compiles to React) |
 
 ```bash
-jac check .                      # type-check everything
-jac test                         # 8 tests
+jac check main.jac               # type-check everything
+jac test                         # 15 tests (4 run the real by llm() path under MockLLM)
 jac run scripts/smoke.jac        # whole walker chain on one local graph
+jac run scripts/verify_llm.jac   # prove all 8 byLLM roles fire against the real key
 ```
 
 ## The 4-minute demo
@@ -200,6 +252,11 @@ jac run scripts/smoke.jac        # whole walker chain on one local graph
    rewritten itself — *"Good news — groceries is covered. Next up: ECS Navigation
    Center."* Nothing pushed it. `FulfillmentWalker` just read the graph.
 6. **Kicker.** Back on Sam's side, **Simulate 48h with no help** → the shelter
-   need escalates its own broadcast radius, and remembers it did.
+   need escalates itself, and the model decides *how*: wider radius, reworded ask,
+   or a second front in `legal` because stopping the eviction is what actually
+   relieves the housing need. It remembers it escalated.
 
-Show `core/walkers.jac` when they ask where Jac runs.
+Show `core/walkers.jac` when they ask where Jac runs — and `core/agent.jac` for
+the agent's tool trace. If anyone asks whether the reasoning is real, run
+`jac run scripts/verify_llm.jac` on the spot: it names every role, counts the
+calls, and exits non-zero if a single answer came from a fallback.

@@ -55,6 +55,38 @@ node Person {
     has categories: list[str] = [];
     has created_at: str = "";
     has last_nudge: str = "";
+
+    # Set by the privacy auditor (reason.jac role 2) before `anon_summary` is
+    # allowed onto the commons. `anon_leaks` records what the auditor caught, so
+    # the demo can show the repair actually happening rather than claim it.
+    has anon_audited: bool = False;
+    has anon_leaks: list[str] = [];
+
+    # Set by the clarifying-question role. Non-empty means the agent decided one
+    # missing fact would change the plan and is asking for it.
+    has clarify_question: str = "";
+    has clarify_why: str = "";
+}
+
+
+node CaseStrategy {
+    """The ReAct caseworker's brief for one person.
+
+    `research_path` is the agent's own tool trace -- which graph reads it chose
+    to make, in order. It is stored rather than logged so the plan can be
+    audited after the fact: the strategy and the research behind it live on the
+    same node.
+    """
+
+    has headline: str;
+    has first_action: str;
+    has ordered_actions: list[str] = [];
+    has rely_on_community: bool = False;
+    has risk: str = "";
+    has research_note: str = "";
+    has research_path: list[str] = [];
+    has engine: str = "heuristic";
+    has at: str = "";
 }
 
 
@@ -189,6 +221,8 @@ edge HasStep: Person --> PlanStep {}
 
 edge HasNeed: Person --> Need {}
 
+edge HasStrategy: Person --> CaseStrategy {}
+
 edge Requires: Org --> Requirement {}
 
 edge BroadcastTo: Need --> Org {
@@ -274,10 +308,48 @@ obj OrgCard {
 }
 
 
+obj StrategyView {
+    """The ReAct caseworker's brief, including the research path behind it."""
+
+    has headline: str = "";
+    has first_action: str = "";
+    has ordered_actions: list[str] = [];
+    has rely_on_community: bool = False;
+    has risk: str = "";
+    has research_note: str = "";
+    has research_path: list[str] = [];
+    has engine: str = "";
+    has at: str = "";
+}
+
+
+obj EngineReport {
+    """What is actually answering questions, carried to both UIs verbatim.
+
+    Flat scalars rather than a nested object on purpose: these are rendered as a
+    badge, and a judge asking "is that really the model?" should be able to read
+    the live call count off the screen.
+    """
+
+    has mode: str = "unknown";
+    has model: str = "";
+    has reason: str = "";
+    has calls: int = 0;
+    has failures: int = 0;
+    has fallbacks: int = 0;
+    has roles: list[str] = [];
+}
+
+
 obj AccountView {
     has role: str;
     has display_name: str;
     has engine: str;
+    has engine_model: str = "";
+    has engine_reason: str = "";
+    has engine_calls: int = 0;
+    has engine_fallbacks: int = 0;
+    has engine_roles: list[str] = [];
 }
 
 
@@ -293,6 +365,11 @@ obj CommunityView {
     has fulfilled_count: int = 0;
     has activity: list[WalkerTrace] = [];
     has engine: str = "heuristic";
+    has engine_model: str = "";
+    has engine_reason: str = "";
+    has engine_calls: int = 0;
+    has engine_fallbacks: int = 0;
+    has engine_roles: list[str] = [];
 }
 
 
@@ -309,6 +386,23 @@ obj SeekerBoard {
     has activity: list[WalkerTrace] = [];
     has engine: str = "heuristic";
     has has_plan: bool = False;
+
+    # 0 or 1 element. A list rather than an optional so the client can render it
+    # with the same map() it uses for every other collection.
+    has strategy: list[StrategyView] = [];
+
+    # Non-empty when the clarifying-question role decided one more fact matters.
+    has clarify_question: str = "";
+    has clarify_why: str = "";
+
+    # What the privacy auditor caught and repaired before publishing.
+    has privacy_leaks: list[str] = [];
+
+    has engine_model: str = "";
+    has engine_reason: str = "";
+    has engine_calls: int = 0;
+    has engine_fallbacks: int = 0;
+    has engine_roles: list[str] = [];
 }
 
 

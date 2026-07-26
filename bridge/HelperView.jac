@@ -7,7 +7,7 @@ size and a 3-digit ZIP - and that is the entire surface area.
 """
 
 import from react { useEffect }
-import from .components.Bits { ActivityFeed, NeedTile, Pill, Stat }
+import from .components.Bits { ActivityFeed, EngineBadge, NeedTile, Pill, Stat }
 
 sv import from .core.graph { CommunityView, NeedCard, OrgCard, PledgeCard, WalkerTrace }
 sv import from .core.walkers { CommunityBoard, FollowUpWalker, MatchWalker, PledgeWalker }
@@ -25,6 +25,11 @@ def:pub HelperView(display_name: str) -> JsxElement {
     has matched_count: int = 0;
     has fulfilled_count: int = 0;
     has engine: str = "";
+    has engine_model: str = "";
+    has engine_reason: str = "";
+    has engine_calls: int = 0;
+    has engine_fallbacks: int = 0;
+    has engine_roles: list[str] = [];
 
     has kind: str = "food";
     has description: str = "";
@@ -66,7 +71,14 @@ def:pub HelperView(display_name: str) -> JsxElement {
                         know it was you.
                     </p>
                 </div>
-                <Pill text={"reasoning: " + engine} tone=""/>
+                <EngineBadge
+                    mode={engine}
+                    model={engine_model}
+                    calls={engine_calls}
+                    fallbacks={engine_fallbacks}
+                    reason={engine_reason}
+                    roles={engine_roles}
+                />
             </div>
             <div className="stats" style={{"marginTop": "16px"}}>
                 <Stat n={open_count} k="open"/>

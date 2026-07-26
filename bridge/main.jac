@@ -9,12 +9,12 @@ half is the `cl` block at the bottom.
 
 import from core.commons { bootstrap, choose_role, me }
 import from core.graph {
-    AccountView, CommunityView, NeedCard, OrgCard, PlanStep, PledgeCard,
-    SeekerBoard, WalkerTrace
+    AccountView, CommunityView, EngineReport, NeedCard, OrgCard, PlanStep,
+    PledgeCard, SeekerBoard, StrategyView, WalkerTrace
 }
 import from core.walkers {
     CommunityBoard, EligibilityPathWalker, FollowUpWalker, FulfillmentWalker,
-    IntakeWalker, MatchWalker, NeedBroadcastWalker, PledgeWalker
+    IntakeWalker, MatchWalker, NeedBroadcastWalker, PledgeWalker, StrategyWalker
 }
 
 

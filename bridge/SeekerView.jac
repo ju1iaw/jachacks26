@@ -8,9 +8,14 @@ coordination between the two walkers.
 """
 
 import from react { useEffect }
-import from .components.Bits { ActivityFeed, NeedTile, Pill, Stat, StepRow }
+import from .components.Bits {
+    ActivityFeed, EngineBadge, NeedTile, Pill, PrivacyNote, Stat, StepRow,
+    StrategyCard
+}
 
-sv import from .core.graph { NeedCard, PlanStep, SeekerBoard, WalkerTrace }
+sv import from .core.graph {
+    NeedCard, PlanStep, SeekerBoard, StrategyView, WalkerTrace
+}
 sv import from .core.walkers { FulfillmentWalker, IntakeWalker }
 
 
@@ -29,6 +34,22 @@ def:pub SeekerView(display_name: str) -> JsxElement {
     has busy: bool = False;
     has error: str = "";
 
+    # The caseworker agent's brief (0 or 1), what the privacy auditor stripped,
+    # and the one question the agent decided was worth asking.
+    has strategy: list[StrategyView] = [];
+    has clarify_question: str = "";
+    has clarify_why: str = "";
+    has privacy_leaks: list[str] = [];
+
+    # Engine evidence, rendered as a badge. `engine_calls` is the number that
+    # answers "is that really the model?" without anyone taking it on trust.
+    has engine_model: str = "";
+    has engine_reason: str = "";
+    has engine_calls: int = 0;
+    has engine_fallbacks: int = 0;
+    has engine_roles: list[str] = [];
+
+    def apply(board: SeekerBoard) -> None;
     async def refresh -> None;
     async def submit -> None;
     def use_example(e: MouseEvent) -> None;
@@ -70,7 +91,14 @@ def:pub SeekerView(display_name: str) -> JsxElement {
                     </button>
                     <button className="btn ghost sm" onClick={use_example}>Use the demo situation</button>
                     <div className="spacer" style={{"flex": "1"}}></div>
-                    <Pill text={"reasoning: " + engine} tone=""/>
+                    <EngineBadge
+                        mode={engine}
+                        model={engine_model}
+                        calls={engine_calls}
+                        fallbacks={engine_fallbacks}
+                        reason={engine_reason}
+                        roles={engine_roles}
+                    />
                 </div>
                 {if error {
                     <p className="err" key="e" style={{"marginTop": "10px"}}>{error}</p>
@@ -95,7 +123,17 @@ def:pub SeekerView(display_name: str) -> JsxElement {
                 }}
 
                 <div className="card">
-                    <div className="eyebrow">Your situation</div>
+                    <div className="row" style={{"justifyContent": "space-between", "alignItems": "flex-start"}}>
+                        <div className="eyebrow">Your situation</div>
+                        <EngineBadge
+                            mode={engine}
+                            model={engine_model}
+                            calls={engine_calls}
+                            fallbacks={engine_fallbacks}
+                            reason={engine_reason}
+                            roles={engine_roles}
+                        />
+                    </div>
                     <h1 style={{"fontSize": "22px", "margin": "8px 0 10px"}}>{headline}</h1>
                     <div className="stats">
                         <Stat n={actionable} k="ready now"/>
@@ -104,8 +142,20 @@ def:pub SeekerView(display_name: str) -> JsxElement {
                     </div>
                 </div>
 
+                {if clarify_question {
+                    <div className="card" key="q" style={{"marginTop": "18px", "borderColor": "var(--cool)"}}>
+                        <div className="eyebrow">One question first</div>
+                        <p style={{"fontSize": "15.5px", "margin": "8px 0 6px"}}>{clarify_question}</p>
+                        <p className="small muted">{clarify_why}</p>
+                    </div>
+                }}
+
                 <div className="cols" style={{"marginTop": "22px"}}>
                     <div>
+                        {for (i, brief) in enumerate(strategy) {
+                            <StrategyCard key={str(i)} brief={brief}/>
+                        }}
+
                         <div className="section-title">
                             Your plan
                             <span className="hint">
@@ -130,7 +180,10 @@ def:pub SeekerView(display_name: str) -> JsxElement {
                             }}
                         </div>
                     </div>
-                    <ActivityFeed items={activity}/>
+                    <div className="stack">
+                        <PrivacyNote leaks={privacy_leaks}/>
+                        <ActivityFeed items={activity}/>
+                    </div>
                 </div>
             </div>
         }}
