@@ -17,6 +17,7 @@ impl SeekerView.apply(board: SeekerBoard) -> int {
     strategy = board.strategy;
     answered = board.answered;
     privacy_leaks = board.privacy_leaks;
+    privacy_audited = board.privacy_audited;
     activity = board.activity;
     engine = board.engine;
     engine_model = board.engine_model;

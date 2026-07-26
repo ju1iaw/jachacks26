@@ -67,6 +67,12 @@ node Person {
     # Set by the privacy auditor (reason.jac role 2) before `anon_summary` is
     # allowed onto the commons. `anon_leaks` records what the auditor caught, so
     # the demo can show the repair actually happening rather than claim it.
+    #
+    # Both travel to the UI, and `anon_audited` has to: an empty `anon_leaks` is
+    # ambiguous on its own, since it reads the same whether the auditor ran and
+    # found nothing or never ran at all. Only this flag separates them, and the
+    # graph is persistent, so a Person written before this field existed loads
+    # with it False -- which is exactly the case the card must not call "clean".
     has anon_audited: bool = False;
     has anon_leaks: list[str] = [];
 }
@@ -442,8 +448,12 @@ obj SeekerBoard {
     # research that justifies it.
     has answered: list[str] = [];
 
-    # What the privacy auditor caught and repaired before publishing.
+    # What the privacy auditor caught and repaired before publishing, and
+    # whether it ran at all. The flag is carried rather than inferred from an
+    # empty `privacy_leaks`, because "audited, nothing found" and "never
+    # audited" are the same empty list and must not render the same way.
     has privacy_leaks: list[str] = [];
+    has privacy_audited: bool = False;
 
     has engine_model: str = "";
     has engine_reason: str = "";

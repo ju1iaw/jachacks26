@@ -202,6 +202,7 @@ def:pub SeekerView(
     has strategy: list[StrategyView] = [];
     has answered: list[str] = [];
     has privacy_leaks: list[str] = [];
+    has privacy_audited: bool = False;
     has activity: list[WalkerTrace] = [];
 
     # Engine evidence kept on the board for diagnostics; not shown in the UI.
@@ -331,6 +332,14 @@ def:pub SeekerView(
         </div>;
     }
 
+    # Show the auditor's verdict whenever there is a published summary to have a
+    # verdict about -- not only when it found something. Gating this on leaks
+    # alone hid the evidence in the one case the claim rests on: a clean audit
+    # rendered as nothing at all. `strategy` covers a Person carried over from
+    # before `anon_audited` existed, whose flag loads False and should therefore
+    # read "not audited" rather than silently vanish.
+    show_privacy = privacy_audited or len(privacy_leaks) > 0 or len(strategy) > 0;
+
     return <div className="wrap seeker-page">
         <div className="seeker-chat">
             <h1 className="chat-heading">How may you be assisted?</h1>
@@ -399,7 +408,7 @@ def:pub SeekerView(
                 </div>
             }}
 
-            {if len(strategy) > 0 or len(answered) > 0 or len(privacy_leaks) > 0 {
+            {if len(strategy) > 0 or len(answered) > 0 or show_privacy {
                 <div className="section-title" key="wt">
                     Why you are seeing this
                     <span className="hint">
@@ -414,8 +423,8 @@ def:pub SeekerView(
                 {if len(answered) > 0 {
                     <AnsweredTrail key="at" rows={answered}/>
                 }}
-                {if len(privacy_leaks) > 0 {
-                    <PrivacyNote key="pn" leaks={privacy_leaks}/>
+                {if show_privacy {
+                    <PrivacyNote key="pn" audited={privacy_audited} leaks={privacy_leaks}/>
                 }}
                 {if len(activity) > 0 {
                     <ActivityFeed key="af" items={activity}/>

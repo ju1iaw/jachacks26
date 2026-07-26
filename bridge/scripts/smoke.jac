@@ -24,7 +24,7 @@ import sys;
 import from core.commons { choose_role, ensure_commons, engine_report }
 import from core.walkers {
     AnswerWalker, CommunityBoard, FollowUpWalker, FulfillmentWalker,
-    IntakeWalker, MatchWalker, PledgeWalker
+    IntakeWalker, MatchWalker, PledgeWalker, _my_person
 }
 
 
@@ -36,7 +36,9 @@ def line(title: str) {
 
 with entry:__main__ {
     ensure_commons();
-    choose_role("seeker", "Maria");
+    # Sign up the way the Gate does when the location permission is granted:
+    # what the browser hands back is a coordinate pair, not a ZIP.
+    choose_role("seeker", "Maria", "email", "maria@example.com", "37.7749, -122.4194");
 
     line("Engine");
     rep = engine_report();
@@ -53,12 +55,21 @@ with entry:__main__ {
     }
 
     line("IntakeWalker");
+    # No ZIP in the story on purpose. The service area has to come from the
+    # location granted at signup -- the agent is forbidden from asking for it
+    # (core/question_guard.jac), so if that wire is broken the tier-1 broadcast
+    # silently stops being filtered by area.
     intake = root spawn IntakeWalker(
-        situation="I need food for me and my two kids this week. I lost my ID when we left the apartment, I don't have a car, and we're staying somewhere with no stove. We also got an eviction notice for the room we're in. Zip is 94110."
+        situation="I need food for me and my two kids this week. I lost my ID when we left the apartment, I don't have a car, and we're staying somewhere with no stove. We also got an eviction notice for the room we're in."
     );
     board = intake.reports[0];
     print("engine:", board.engine);
     print("headline:", board.headline);
+    person = _my_person();
+    if person is not None {
+        area = person.zip_prefix if person.zip_prefix else "(none -- results NOT filtered by area)";
+        print(f"service area resolved from location: {area}");
+    }
     for step in board.steps {
         print(f"  [{step.status:9}] {step.title}");
         print(f"              {step.detail}");
@@ -70,13 +81,18 @@ with entry:__main__ {
     for nd in board.needs {
         print(f"  {nd.code} {nd.category} urgency={nd.urgency} -> {nd.summary}");
     }
-    if board.privacy_leaks {
-        print("privacy auditor caught and repaired before publishing:");
+    # `audited` is printed separately from the leak list on purpose: an empty
+    # list means "found nothing" only if the auditor actually ran, and reading
+    # the two together is what makes that a claim rather than an assumption.
+    if not board.privacy_audited {
+        print("privacy auditor: DID NOT RUN -- nothing below has been checked");
+    } elif board.privacy_leaks {
+        print("privacy auditor: ran, caught and repaired before publishing:");
         for leak in board.privacy_leaks {
             print(f"  - {leak}");
         }
     } else {
-        print("privacy auditor: no identity leaks in the published summary");
+        print("privacy auditor: ran, found no identity leaks in the published summary");
     }
     if board.answered {
         print("already answered:");

@@ -80,6 +80,7 @@ import from core.reason {
     read_situation_safe, require_engine
 }
 import from core.agent { drain_tool_trace, plan_strategy_safe }
+import from core.geo { zip_prefix_of }
 
 
 glob CATEGORY_ORDER: list[str] = ["food", "shelter", "legal", "jobs"];
@@ -173,6 +174,7 @@ def build_board(person: Person) -> SeekerBoard {
         strategy=[strategy_view(s) for s in [person ->:HasStrategy:->]],
         answered=answered_trail(person),
         privacy_leaks=person.anon_leaks,
+        privacy_audited=person.anon_audited,
         engine_model=rep.model,
         engine_reason=rep.reason,
         engine_calls=rep.calls,
@@ -623,7 +625,16 @@ walker:protect IntakeWalker {
         person.situation = self.situation;
         person.categories = read.categories;
         person.household = read.household;
-        person.zip_prefix = read.zip_prefix;
+        # The location the person gave at signup wins over the one the model
+        # inferred from their story. It was collected explicitly, with a
+        # permission prompt, and it is the reason `question_guard` is allowed to
+        # forbid the agent from ever asking where someone lives -- `agent.jac`
+        # promises the model it "already has every location detail it is
+        # permitted to hold", and this assignment is what makes that true.
+        # `read.zip_prefix` stays as the fallback for a person who mentioned a
+        # ZIP in their story but skipped the location step.
+        from_account = zip_prefix_of(acct.location if acct is not None else "");
+        person.zip_prefix = from_account if from_account else read.zip_prefix;
         person.assets = read.assets;
         person.anon_summary = published;
         person.headline = read.headline;
@@ -643,6 +654,23 @@ walker:protect IntakeWalker {
             );
         } else {
             log_walker("PrivacyAuditor", "audited the public summary -- no identity leaks found");
+        }
+
+        # An unresolved area is the one case where the matcher stops filtering by
+        # service area entirely, so it is said out loud rather than left to look
+        # like a normal run: every tier-1 organisation will be offered, including
+        # ones that will turn this person away at the door.
+        if person.zip_prefix {
+            log_walker(
+                "IntakeWalker",
+                f"service area {person.zip_prefix} "
+                + ("from the location given at signup" if from_account else "inferred from their story")
+            );
+        } else {
+            log_walker(
+                "IntakeWalker",
+                "no service area resolved -- tier-1 results are NOT filtered by area"
+            );
         }
 
         # The eligibility plan and the broadcast are the core promise -- if the

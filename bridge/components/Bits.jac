@@ -281,18 +281,28 @@ def:pub AnsweredTrail(rows: list[str]) -> JsxElement {
 }
 
 
-"""What the auditor stripped before anything was published.
+"""What the auditor stripped before anything was published -- or that it ran.
 
 The claim "no identity crosses the boundary" is worth very little as a sentence
 in a README; this shows the specific fragments a second model pass caught and
 removed from the text volunteers actually see.
+
+Three states, not two, and the distinction is the whole point of the card. An
+empty `leaks` list does not mean "clean" by itself -- it is equally what a
+Person that was never audited looks like. So the claim that a second pass ran is
+made only when `audited` says it did, and never inferred from missing evidence.
 """
-def:pub PrivacyNote(leaks: list[str]) -> JsxElement {
-    clean = len(leaks) == 0;
-    return <div className="card" style={{"borderColor": "var(--ok)" if clean else "var(--warm)"}}>
+def:pub PrivacyNote(audited: bool, leaks: list[str]) -> JsxElement {
+    clean = audited and len(leaks) == 0;
+    tone = "ok" if clean else ("warm" if audited else "danger");
+    label = (
+        "clean" if clean
+        else (str(len(leaks)) + " leak(s) stripped" if audited else "not audited")
+    );
+    return <div className="card" style={{"borderColor": "var(--ok)" if clean else ("var(--warm)" if audited else "var(--danger)")}}>
         <div className="row" style={{"justifyContent": "space-between"}}>
             <div className="eyebrow">Privacy auditor</div>
-            <Pill text={"clean" if clean else str(len(leaks)) + " leak(s) stripped"} tone={"ok" if clean else "warm"}/>
+            <Pill text={label} tone={tone}/>
         </div>
         {if clean {
             <p className="small muted" key="c" style={{"marginTop": "8px"}}>
@@ -300,7 +310,13 @@ def:pub PrivacyNote(leaks: list[str]) -> JsxElement {
                 that could identify you.
             </p>
         }}
-        {if not clean {
+        {if not audited {
+            <p className="small muted" key="u" style={{"marginTop": "8px"}}>
+                This summary has not been through the privacy auditor, so nothing
+                here has been checked for identifying details.
+            </p>
+        }}
+        {if audited and len(leaks) > 0 {
             <div key="l" style={{"marginTop": "8px"}}>
                 <p className="small muted" style={{"marginBottom": "8px"}}>
                     Caught and removed before any volunteer could see it:

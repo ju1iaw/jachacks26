@@ -257,6 +257,15 @@ repairs is what gets published to the commons, and what it caught is stored on t
 a name, a street address, a phone number — that were stripped before any
 volunteer could see them.
 
+The card has three states, not two, and the third one is the point. "No leaks
+found" and "never audited" are the same empty list, so the UI would happily
+render a reassuring green *clean* for a summary nothing had ever looked at —
+asserting exactly the thing this section claims is checked. `Person.anon_audited`
+is therefore carried onto the board and read by the card, and the claim that a
+second pass ran is only ever made when that flag says it did. A `Person` written
+before the flag existed loads with it `False` on the persistent graph, and reads
+**not audited** rather than clean.
+
 ### The ReAct caseworker
 
 `core/agent.jac` is the one place the model isn't answering a single well-posed
