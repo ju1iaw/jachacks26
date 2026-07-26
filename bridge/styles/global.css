@@ -1,3 +1,5 @@
+@import url("https://fonts.googleapis.com/css2?family=Lora:ital,wght@0,400;0,500;0,600;0,700;1,400;1,500&family=DM+Sans:opsz,wght@9..40,500;9..40,600;9..40,700&display=swap");
+
 :root {
   --bg: #557b83;
   --panel: #fffdf2;
@@ -12,6 +14,8 @@
   --danger: #a34f4f;
   --ok: #397b63;
   --radius: 12px;
+  --serif: "Lora", Georgia, "Times New Roman", serif;
+  --brand-sans: "DM Sans", ui-sans-serif, system-ui, sans-serif;
   --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace;
 }
 
@@ -21,7 +25,7 @@ body {
   margin: 0;
   background: var(--bg);
   color: var(--text);
-  font-family: ui-sans-serif, -apple-system, "Segoe UI", Inter, system-ui, sans-serif;
+  font-family: var(--serif);
   font-size: 15px;
   line-height: 1.55;
   -webkit-font-smoothing: antialiased;
@@ -50,9 +54,14 @@ input, textarea, select { font: inherit; color: inherit; }
 
 .brand { display: flex; align-items: center; gap: 10px; font-weight: 660; letter-spacing: -0.02em; }
 .brand-logo { width: 44px; height: 34px; object-fit: contain; flex: none; }
+.brand-name {
+  font-family: var(--brand-sans);
+  font-weight: 700;
+  letter-spacing: -0.03em;
+}
 .brand small, .brand-tagline {
   color: var(--muted); font-weight: 450; letter-spacing: 0;
-  font-style: italic; margin-left: 2px;
+  font-family: var(--serif); font-style: italic; margin-left: 2px;
 }
 .topbar .brand-tagline { color: #fffdf2; }
 
@@ -278,6 +287,7 @@ label.lbl { display: block; font-size: 12.5px; color: var(--muted); margin-botto
 .directory-name {
   margin-top: -20px; color: #fffdf2; font-size: clamp(54px, 8vw, 86px);
   line-height: 1; font-weight: 720; letter-spacing: -.055em;
+  font-family: var(--brand-sans);
 }
 .directory-tagline { margin-top: 14px; color: var(--warm); font-size: 18px; }
 .directory-actions {
@@ -299,7 +309,10 @@ label.lbl { display: block; font-size: 12.5px; color: var(--muted); margin-botto
   color: var(--cool-dim); text-transform: uppercase; letter-spacing: .09em;
   font-size: 11px; font-weight: 720;
 }
-.directory-choice b { margin: 12px 0 8px; font-size: 24px; letter-spacing: -.025em; }
+.directory-choice b {
+  margin: 12px 0 8px; font-size: 24px; letter-spacing: -.025em;
+  font-family: var(--brand-sans); font-weight: 700;
+}
 .directory-choice > span:last-child { color: var(--muted); font-size: 14px; line-height: 1.5; }
 .about-link {
   display: inline-flex; gap: 9px; align-items: center; margin-top: 36px;
@@ -448,14 +461,24 @@ label.lbl { display: block; font-size: 12.5px; color: var(--muted); margin-botto
 .suggest-card:hover { border-color: var(--cool); }
 
 .suggest-head {
-  display: flex; align-items: flex-start; justify-content: space-between; gap: 12px;
-  width: 100%; padding: 14px 16px;
+  display: flex; align-items: flex-start; justify-content: space-between; gap: 10px;
+  width: 100%; padding: 14px 14px 14px 10px;
   border: none; background: transparent; color: inherit; text-align: left;
 }
-.suggest-head-text { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+.suggest-head-text {
+  display: flex; flex-direction: row; align-items: flex-start; gap: 8px;
+  min-width: 0; flex: 1;
+}
+.suggest-head .pill {
+  flex: none;
+  margin-left: 0;
+  align-self: flex-start;
+}
 .suggest-head h3 {
   font-size: 15.5px; font-weight: 600; letter-spacing: -0.015em;
   line-height: 1.35;
+  margin: 0;
+  padding-top: 1px;
 }
 
 .suggest-body {
@@ -490,7 +513,19 @@ label.lbl { display: block; font-size: 12.5px; color: var(--muted); margin-botto
 
 .settings-panel .chat-heading { text-align: left; }
 .settings-card .lbl { margin-bottom: 6px; }
-.eligibility-box { min-height: 140px; line-height: 1.55; }
+.eligibility-box {
+  min-height: 160px;
+  line-height: 1.55;
+  background: #ffffff;
+  color: var(--text);
+  border: 1.5px solid var(--cool-dim);
+  box-shadow: inset 0 0 0 1px rgba(255,253,242,.6);
+}
+.eligibility-box.editable:focus {
+  border-color: var(--cool);
+  box-shadow: 0 0 0 3px rgba(57,174,169,.18);
+}
+.eligibility-box::placeholder { color: #8aa0a4; font-style: italic; }
 .settings-panel .choice { cursor: pointer; }
 .settings-panel .btn.ghost { color: #fffdf2; border-color: rgba(255,253,242,.35); }
 .settings-panel .btn.ghost:hover { background: rgba(255,253,242,.12); color: #fffdf2; }

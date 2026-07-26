@@ -36,29 +36,54 @@ impl Gate.do_login -> None {
 impl Gate.finish_signup -> None {
     signup_result: dict | None = None;
     login_ok: bool = False;
-    stamp = str(Date.now());
-    auth_email = "bridge-" + stamp + "@session.local";
-    auth_password = "Bridge-" + stamp;
+    auth_email = email.strip().lower();
+    auth_password = password;
     busy = True;
     error = "";
+    if not auth_email or "@" not in auth_email {
+        busy = False;
+        error = "Enter a valid email so you can sign back in.";
+        stage = "account";
+        return;
+    }
+    if len(auth_password) < 8 {
+        busy = False;
+        error = "Password needs at least 8 characters.";
+        stage = "account";
+        return;
+    }
     try {
         signup_result = await jacSignup(auth_email, auth_password);
         if not signup_result["success"] {
             busy = False;
-            error = "We couldn’t create your account. Please try again.";
-            return;
+            # Already registered — try signing in with the same credentials.
+            try {
+                login_ok = await jacLogin(auth_email, auth_password);
+            } except Exception {
+                login_ok = False;
+            }
+            if not login_ok {
+                error = "That email is already in use, or signup failed. Try signing in, or use a different email.";
+                stage = "account";
+                return;
+            }
+        } else {
+            login_ok = await jacLogin(auth_email, auth_password);
         }
-        login_ok = await jacLogin(auth_email, auth_password);
     } except Exception {
         login_ok = False;
     }
     if not login_ok {
         busy = False;
-        error = "Your account was created, but we couldn’t open it. Please try again.";
+        error = "Your account was created, but we couldn’t open it. Please try signing in.";
+        stage = "account";
         return;
     }
     try {
-        _ = await choose_role(selected_role, display_name, contact_method if contact_value else "", contact_value, location);
+        # Prefer the contact they gave; otherwise store the login email on the profile.
+        method = contact_method if contact_value else "email";
+        value = contact_value if contact_value else auth_email;
+        _ = await choose_role(selected_role, display_name, method, value, location);
         onReady();
     } except Exception as e {
         error = "Could not save that: " + str(e);
@@ -102,9 +127,30 @@ impl Gate.to_signup(e: MouseEvent) -> None {
 
 impl Gate.next_name(e: MouseEvent) -> None {
     if display_name.strip() {
-        stage = "contact";
+        stage = "account";
         error = "";
     }
+}
+
+
+impl Gate.next_account(e: MouseEvent) -> None {
+    addr = email.strip().lower();
+    if not addr or "@" not in addr {
+        error = "Enter a valid email address.";
+        return;
+    }
+    if len(password) < 8 {
+        error = "Password needs at least 8 characters.";
+        return;
+    }
+    email = addr;
+    stage = "contact";
+    # Prefill contact email from the login email they just chose.
+    if not contact_value.strip() {
+        contact_method = "email";
+        contact_value = addr;
+    }
+    error = "";
 }
 
 impl Gate.next_contact(e: MouseEvent) -> None {
@@ -120,7 +166,14 @@ impl Gate.skip_contact(e: MouseEvent) -> None {
 impl Gate.request_location(e: MouseEvent) -> None {
     locating = True;
     error = "";
-    navigator.geolocation.getCurrentPosition(
+    # Typed as any so client typecheck accepts the browser Geolocation API.
+    geo = (navigator as any).geolocation;
+    if geo is None {
+        locating = False;
+        error = "Location is not available in this browser. Enter it manually or skip.";
+        return;
+    }
+    geo.getCurrentPosition(
         lambda (position: any) {
             location = str(position.coords.latitude) + ", " + str(position.coords.longitude);
             locating = False;

@@ -14,18 +14,9 @@ def _ref_sugs(ref: Ref[list[Suggestion]]) -> list[Suggestion] {
 
 impl SeekerView.apply(board: SeekerBoard) -> int {
     nudge = board.nudge;
-    strategy = board.strategy;
-    answered = board.answered;
-    privacy_leaks = board.privacy_leaks;
-    activity = board.activity;
-    engine = board.engine;
-    engine_model = board.engine_model;
-    engine_reason = board.engine_reason;
-    engine_calls = board.engine_calls;
-    engine_roles = board.engine_roles;
 
-    # The question comes off the agent's brief rather than a role of its own, so
-    # it is only ever asked when the research that justifies it found something.
+    # Open question still comes from the agent's strategy brief on the board —
+    # we just don't render the research/activity panels in the seeker UI.
     # Skip while an answer is in flight so the 3s poll cannot restore the card.
     answering = True if answering_ref.current else False;
     if not answering {
@@ -57,7 +48,7 @@ impl SeekerView.apply(board: SeekerBoard) -> int {
         next_inbox = next_inbox + [sug];
     }
 
-    # Unconfirmed helper matches belong under Ongoing (unless already handled).
+    # Matched helper offers land in the inbox with Accept (same as programs).
     for card in board.needs {
         if card.status != "matched" {
             continue;
@@ -67,15 +58,14 @@ impl SeekerView.apply(board: SeekerBoard) -> int {
             continue;
         }
         already = False;
-        for o in next_ongoing {
-            if o.id == sug.id {
+        for s in next_inbox {
+            if s.id == sug.id {
                 already = True;
                 break;
             }
         }
         if not already {
-            next_ongoing = next_ongoing + [sug];
-            handled = handled + [sug.id];
+            next_inbox = next_inbox + [sug];
         }
     }
 
@@ -164,6 +154,24 @@ impl SeekerView.accept_item(sid: str) -> None {
     ongoing_ref.current = next_ongoing;
     ongoing = next_ongoing;
     ongoing_open = True;
+
+    # Helper offers: settle the matched Need so the plan updates (and nudge).
+    if sid.startswith("need-") {
+        code = sid[5:];
+        try {
+            result = await root spawn FulfillmentWalker(accept_code=code);
+            if result.reports and len(result.reports) > 0 {
+                # Keep the accepted card in Ongoing; re-apply steps/nudge only.
+                apply(result.reports[0]);
+                ongoing_ref.current = next_ongoing;
+                ongoing = next_ongoing;
+                handled_ref.current = handled;
+            }
+        } except Exception {
+            # Card stays under Ongoing even if settle could not run yet.
+            error = error;
+        }
+    }
 }
 
 
