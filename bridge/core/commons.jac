@@ -81,13 +81,22 @@ def:protect me -> AccountView {
         engine_model=rep.model,
         engine_reason=rep.reason,
         engine_calls=rep.calls,
-        engine_roles=rep.roles
+        engine_roles=rep.roles,
+        contact_method=acct.contact_method if acct is not None else "",
+        contact_value=acct.contact_value if acct is not None else "",
+        location=acct.location if acct is not None else ""
     );
 }
 
 
 """Claim a side of Bridge. Called once, right after signup."""
-def:protect choose_role(role: str, display_name: str) -> AccountView {
+def:protect choose_role(
+    role: str,
+    display_name: str,
+    contact_method: str = "",
+    contact_value: str = "",
+    location: str = ""
+) -> AccountView {
     clean = role if role in ["seeker", "helper"] else "seeker";
     acct = _my_account();
     if acct is None {
@@ -96,6 +105,9 @@ def:protect choose_role(role: str, display_name: str) -> AccountView {
         acct.role = clean;
         acct.display_name = display_name;
     }
+    acct.contact_method = contact_method;
+    acct.contact_value = contact_value;
+    acct.location = location;
     ensure_commons();
     if clean == "helper" and not [root --> [?:Donor]] {
         root ++> Donor(name=display_name);
@@ -108,7 +120,10 @@ def:protect choose_role(role: str, display_name: str) -> AccountView {
         engine_model=rep.model,
         engine_reason=rep.reason,
         engine_calls=rep.calls,
-        engine_roles=rep.roles
+        engine_roles=rep.roles,
+        contact_method=acct.contact_method,
+        contact_value=acct.contact_value,
+        location=acct.location
     );
 }
 

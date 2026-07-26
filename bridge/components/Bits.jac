@@ -35,7 +35,7 @@ glob URGENCY_PILL: dict[str, str] = {
 
 def:pub Brand(tagline: str = "") -> JsxElement {
     return <div className="brand">
-        <div className="brand-mark"></div>
+        <img className="brand-logo" src="/assets/bridge-logo.png" alt="Bridge"/>
         <span>Bridge</span>
         {if tagline {
             <small key="t">{" - " + tagline}</small>

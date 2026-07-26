@@ -319,8 +319,8 @@ obj EligibilityVerdict {
 
 sem EligibilityVerdict = "A judgement about whether one person clears one specific eligibility gate.";
 sem EligibilityVerdict.satisfied = "True only if the person's stated situation clearly already satisfies the requirement. If it is unclear or unstated, answer False -- being told about a gate early is the whole point.";
-sem EligibilityVerdict.reasoning = "One short sentence, addressed to the person, explaining why. Reference what they actually said.";
-sem EligibilityVerdict.unblock_action = "If not satisfied: the single most concrete next action that would clear this gate, phrased as an instruction under 20 words. If satisfied: an empty string.";
+sem EligibilityVerdict.reasoning = "One short sentence, addressed to the person, explaining why they do or do not qualify. Reference what they actually said.";
+sem EligibilityVerdict.unblock_action = "If not satisfied: the simplest concrete steps to qualify, under 30 words, using the published workaround when given. Example: 'Ask the shelter front desk for a signed letter, or bring any mail with your name on it.' If satisfied: an empty string.";
 
 def judge_requirement(
     situation: str,
@@ -329,12 +329,12 @@ def judge_requirement(
     requirement_kind: str,
     workaround: str
 ) -> EligibilityVerdict by llm(temperature=0.1);
-sem judge_requirement = "Decide whether this person's situation satisfies this organisation's eligibility requirement, and if not, what single action would unblock them.";
+sem judge_requirement = "Decide whether this person already qualifies for this organisation's requirement. If not, tell them the specific simple steps to qualify (how to get a shelter letter, free ID, etc.) using the published workaround. Never leave them with only the requirement name.";
 sem judge_requirement.situation = "The person's own description of their circumstances.";
 sem judge_requirement.assets = "Comma-separated list of documents and resources the person confirmed they have.";
 sem judge_requirement.requirement = "The requirement the organisation enforces.";
 sem judge_requirement.requirement_kind = "Category of the requirement: 'document', 'residency', 'income', or 'appointment'.";
-sem judge_requirement.workaround = "The known way to satisfy this requirement, if the organisation publishes one.";
+sem judge_requirement.workaround = "The known way to satisfy this requirement, if the organisation publishes one. Prefer this wording when writing unblock_action.";
 
 
 # ===========================================================================

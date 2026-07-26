@@ -1,20 +1,87 @@
 """Handlers for SeekerView."""
 
-impl SeekerView.apply(board: SeekerBoard) -> None {
-    steps = board.steps;
-    needs = board.needs;
-    activity = board.activity;
-    headline = board.headline;
+def _ref_ids(ref: Ref[list[str]]) -> list[str] {
+    cur = ref.current;
+    return cur if cur else [];
+}
+
+
+def _ref_sugs(ref: Ref[list[Suggestion]]) -> list[Suggestion] {
+    cur = ref.current;
+    return cur if cur else [];
+}
+
+
+impl SeekerView.apply(board: SeekerBoard) -> int {
     nudge = board.nudge;
-    engine = board.engine;
-    has_plan = board.has_plan;
     strategy = board.strategy;
     answered = board.answered;
     privacy_leaks = board.privacy_leaks;
+    activity = board.activity;
+    engine = board.engine;
     engine_model = board.engine_model;
     engine_reason = board.engine_reason;
     engine_calls = board.engine_calls;
     engine_roles = board.engine_roles;
+
+    # The question comes off the agent's brief rather than a role of its own, so
+    # it is only ever asked when the research that justifies it found something.
+    # Clearing it when the brief has none is what closes the card after an answer.
+    asked = "";
+    why = "";
+    for brief in board.strategy {
+        if brief.open_question {
+            asked = brief.open_question;
+            why = brief.question_why;
+        }
+    }
+    clarify_question = asked;
+    clarify_why = why;
+
+    if board.situation and not situation {
+        situation = board.situation;
+    }
+
+    handled = _ref_ids(handled_ref);
+    next_ongoing = _ref_sugs(ongoing_ref);
+
+    candidates = board_to_suggestions(board.steps);
+    next_inbox: list[Suggestion] = [];
+    for sug in candidates {
+        if sug.id in handled {
+            continue;
+        }
+        next_inbox = next_inbox + [sug];
+    }
+
+    # Unconfirmed helper matches belong under Ongoing (unless already handled).
+    for card in board.needs {
+        if card.status != "matched" {
+            continue;
+        }
+        sug = need_to_suggestion(card);
+        if sug.id in handled {
+            continue;
+        }
+        already = False;
+        for o in next_ongoing {
+            if o.id == sug.id {
+                already = True;
+                break;
+            }
+        }
+        if not already {
+            next_ongoing = next_ongoing + [sug];
+            handled = handled + [sug.id];
+        }
+    }
+
+    handled_ref.current = handled;
+    ongoing_ref.current = next_ongoing;
+    inbox = next_inbox;
+    ongoing = next_ongoing;
+    past = _ref_sugs(past_ref);
+    return len(next_inbox);
 }
 
 
@@ -22,87 +89,54 @@ impl SeekerView.refresh -> None {
     try {
         result = await root spawn FulfillmentWalker();
         if result.reports and len(result.reports) > 0 {
-            board = result.reports[0];
-            apply(board);
-            # Hold the box in sync with the graph whenever it is not being
-            # edited, so re-describing always opens on the words that produced
-            # the plan on screen -- and so backing out discards the edit. While
-            # `editing`, the box is the person's; the poll keeps its hands off.
-            # `board.situation` is empty until a Person exists, which is what
-            # stops this from wiping what someone is typing before their first
-            # submit.
-            if board.situation and not editing {
-                situation = board.situation;
-            }
+            apply(result.reports[0]);
         }
     } except Exception {
-        # A poll that fails is not worth surfacing - the next tick retries.
-        engine = engine;
+        nudge = nudge;
     }
 }
 
 
 impl SeekerView.submit -> None {
-    if not situation.strip() {
-        error = "Tell us what's going on first.";
+    await submit_with(situation);
+}
+
+
+impl SeekerView.submit_with(text: str) -> None {
+    request = text.strip();
+    if not request {
+        error = "Tell us what you need first.";
         return;
     }
+    situation = request;
     busy = True;
     error = "";
+    inbox_len: int = 0;
     try {
-        result = await root spawn IntakeWalker(situation=situation);
+        result = await root spawn IntakeWalker(situation=request);
         if result.reports and len(result.reports) > 0 {
-            apply(result.reports[0]);
-            # IntakeWalker takes the update path itself -- one Person, replanned,
-            # stale needs retired -- so a successful resubmit just closes the box.
-            editing = False;
+            inbox_len = apply(result.reports[0]);
         }
     } except Exception as e {
         raw = str(e);
         if "ENGINE_UNAVAILABLE" in raw {
-            error = "Bridge has no working model connection right now, so a plan can't be built. Add an API key on the server and try again.";
+            error = "No model connection right now — showing example programs you can try.";
         } else {
-            error = "Something went wrong building the plan. Try again in a moment.";
+            error = "Something went wrong — showing example programs you can try.";
         }
+    }
+
+    if inbox_len == 0 {
+        handled = _ref_ids(handled_ref);
+        next_inbox: list[Suggestion] = [];
+        for d in demo_suggestions() {
+            if d.id not in handled {
+                next_inbox = next_inbox + [d];
+            }
+        }
+        inbox = next_inbox;
     }
     busy = False;
-}
-
-
-"""Send the answer to the agent's question and let the pipeline re-plan on it.
-
-The whole chain re-runs server-side, so this is a slow call by design -- what
-comes back is a plan that was re-reasoned against the new fact, not the old plan
-with a field filled in.
-"""
-impl SeekerView.send_answer(value: str) -> None {
-    reply = value.strip();
-    if not reply or answering {
-        return;
-    }
-    answering = True;
-    error = "";
-    question = "";
-    for brief in strategy {
-        if brief.open_question {
-            question = brief.open_question;
-        }
-    }
-    try {
-        result = await root spawn AnswerWalker(answer=reply, question=question);
-        if result.reports and len(result.reports) > 0 {
-            apply(result.reports[0]);
-        }
-        answer_draft = "";
-    } except Exception as e {
-        error = "Could not record that answer: " + str(e);
-    }
-    answering = False;
-}
-
-
-impl SeekerView.set_draft(value: str) -> None {
-    answer_draft = value;
 }
 
 
@@ -111,15 +145,131 @@ impl SeekerView.use_example(e: MouseEvent) -> None {
 }
 
 
-"""Reopen intake over an existing plan, pre-filled with what they said last time."""
-impl SeekerView.start_over(e: MouseEvent) -> None {
-    editing = True;
-    error = "";
+impl SeekerView.accept_item(sid: str) -> None {
+    moved: list[Suggestion] = [s for s in inbox if s.id == sid];
+    inbox = [s for s in inbox if s.id != sid];
+    if len(moved) == 0 {
+        return;
+    }
+    handled = _ref_ids(handled_ref);
+    if sid not in handled {
+        handled = handled + [sid];
+    }
+    handled_ref.current = handled;
+
+    next_ongoing = _ref_sugs(ongoing_ref) + moved;
+    ongoing_ref.current = next_ongoing;
+    ongoing = next_ongoing;
+    ongoing_open = True;
 }
 
 
-"""Back out of a re-describe. Nothing was sent, so the plan is untouched."""
-impl SeekerView.keep_plan(e: MouseEvent) -> None {
-    editing = False;
+impl SeekerView.dismiss_item(sid: str) -> None {
+    moved: list[Suggestion] = [s for s in inbox if s.id == sid];
+    inbox = [s for s in inbox if s.id != sid];
+    if len(moved) == 0 {
+        return;
+    }
+    handled = _ref_ids(handled_ref);
+    if sid not in handled {
+        handled = handled + [sid];
+    }
+    handled_ref.current = handled;
+
+    next_past = _ref_sugs(past_ref) + moved;
+    past_ref.current = next_past;
+    past = next_past;
+}
+
+
+impl SeekerView.dismiss_ongoing(sid: str) -> None {
+    cur = _ref_sugs(ongoing_ref);
+    moved: list[Suggestion] = [s for s in cur if s.id == sid];
+    next_ongoing = [s for s in cur if s.id != sid];
+    ongoing_ref.current = next_ongoing;
+    ongoing = next_ongoing;
+    if len(moved) == 0 {
+        return;
+    }
+    handled = _ref_ids(handled_ref);
+    if sid not in handled {
+        handled = handled + [sid];
+    }
+    handled_ref.current = handled;
+
+    next_past = _ref_sugs(past_ref) + moved;
+    past_ref.current = next_past;
+    past = next_past;
+}
+
+
+impl SeekerView.toggle_ongoing -> None {
+    ongoing_open = not ongoing_open;
+}
+
+
+impl SeekerView.go_home(e: MouseEvent) -> None {
+    if onHome {
+        onHome();
+    }
+}
+
+
+impl SeekerView.set_clarify_reply(e: ChangeEvent) -> None {
+    clarify_reply = e.target.value;
+}
+
+
+impl SeekerView.answer_clarify_yes(e: MouseEvent) -> None {
+    # Plain "Yes" -- AnswerWalker stores the question alongside it and folds both
+    # into the narrative, so echoing the question back here would duplicate it.
+    await apply_clarify("Yes");
+}
+
+
+impl SeekerView.answer_clarify_no(e: MouseEvent) -> None {
+    await apply_clarify("No");
+}
+
+
+impl SeekerView.send_clarify_reply -> None {
+    await apply_clarify(clarify_reply);
+}
+
+
+"""Answer the agent's question and let the whole pipeline re-reason on it.
+
+Deliberately NOT a resubmit with the answer glued onto the situation. `AnswerWalker`
+records the Q&A as a node, folds it into the person's own words and re-runs the
+chain -- so the answer lands in the trail the agent is handed on every re-plan,
+which is what stops it being asked twice. Slow by design: what comes back is a
+plan re-reasoned against the new fact, not the old plan with a field filled in.
+"""
+impl SeekerView.apply_clarify(ans: str) -> None {
+    text = ans.strip();
+    if not text or answering {
+        return;
+    }
+    asked = clarify_question;
+    answering = True;
     error = "";
+    # Close the card straight away -- the re-plan takes a few seconds and the
+    # question it was asking has already been answered.
+    clarify_reply = "";
+    clarify_question = "";
+    clarify_why = "";
+    try {
+        result = await root spawn AnswerWalker(answer=text, question=asked);
+        if result.reports and len(result.reports) > 0 {
+            apply(result.reports[0]);
+        }
+    } except Exception as e {
+        raw = str(e);
+        if "ENGINE_UNAVAILABLE" in raw {
+            error = "No model connection right now, so that answer could not be worked through.";
+        } else {
+            error = "Could not record that answer. Try again in a moment.";
+        }
+    }
+    answering = False;
 }
