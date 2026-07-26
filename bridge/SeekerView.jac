@@ -7,7 +7,8 @@ offers that are not yet redeemed also land under Ongoing.
 
 import from react { useEffect }
 import from .components.Suggestions {
-    ActionStep, OngoingPanel, Suggestion, SuggestionCard, demo_suggestions
+    ActionStep, OngoingPanel, Suggestion, SuggestionCard, WorkingLabel,
+    demo_suggestions
 }
 
 sv import from .core.commons { me, update_profile }
@@ -318,20 +319,27 @@ def:pub SeekerView(
     return <div className="wrap seeker-page">
         <div className="seeker-chat">
             <h1 className="chat-heading">How may you be assisted?</h1>
-            <p className="muted small" style={{"marginTop": "8px", "marginBottom": "16px"}}>
-                Describe what you need in plain words. Bridge returns programs you may qualify for.
-            </p>
 
             <textarea
                 className="field chat-box"
+                style={{"marginTop": "16px"}}
                 value={situation}
                 placeholder="I need food for me and my two kids this week..."
+                autoComplete="off"
+                autoCorrect="off"
+                autoCapitalize="off"
+                spellCheck={False}
+                name="bridge-seeker-situation"
                 onChange={lambda (e: ChangeEvent) { situation = e.target.value; }}
             />
 
             <div className="row" style={{"marginTop": "12px"}}>
                 <button className="btn primary" type="button" onClick={submit} disabled={busy}>
-                    {"Finding options..." if busy else "Send request"}
+                    {if busy {
+                        <WorkingLabel key="w" text="Working on request"/>
+                        skip;
+                    }}
+                    Send request
                 </button>
                 <button className="btn ghost sm" type="button" onClick={use_example}>
                     Use demo request
@@ -343,20 +351,20 @@ def:pub SeekerView(
             }}
 
             {if nudge {
-                <div className="card tight" key="n" style={{
-                    "borderColor": "var(--ok)",
-                    "background": "#e9f0d1",
-                    "marginTop": "14px"
-                }}>
+                <div className="card tight" key="n" style={{"marginTop": "14px"}}>
                     <span className="pill ok"><span className="dot"></span>update</span>
                     <span style={{"marginLeft": "8px", "fontSize": "14px"}}>{nudge}</span>
                 </div>
             }}
 
             {if clarify_question {
-                <div className="card tight" key="q" style={{"marginTop": "14px", "borderColor": "var(--cool)"}}>
+                <div className="card tight" key="q" style={{"marginTop": "14px"}}>
                     <div className="eyebrow">
-                        {"Working on your answer..." if answering else "One question first"}
+                        {if answering {
+                            <WorkingLabel key="a" text="Working on your answer"/>
+                            skip;
+                        }}
+                        One question first
                     </div>
                     <p style={{"marginTop": "6px"}}>{clarify_question}</p>
                     <p className="small muted">{clarify_why}</p>

@@ -5,6 +5,8 @@ simple action steps with links. Swipe left (or the accept control) moves the
 item into Past or Ongoing respectively.
 """
 
+import from react { useEffect }
+
 
 obj ActionStep {
     has text: str;
@@ -22,6 +24,22 @@ obj Suggestion {
     has steps: list[ActionStep] = [];
     has kind: str = "program";
     has badge: str = "";
+}
+
+
+"""Busy label with cycling dots: . → .. → ..."""
+def:pub WorkingLabel(text: str) -> JsxElement {
+    has step: int = 1;
+
+    useEffect(lambda {
+        timer = setInterval(lambda {
+            step = 1 if step >= 3 else step + 1;
+        }, 450);
+        return lambda { clearInterval(timer); };
+    }, []);
+
+    dots = "." if step == 1 else (".." if step == 2 else "...");
+    return <span className="working-label">{text + dots}</span>;
 }
 
 
