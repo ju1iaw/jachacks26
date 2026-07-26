@@ -298,7 +298,7 @@ obj LeakAudit {
 
 sem LeakAudit = "The result of auditing a supposedly-anonymized summary for anything that could identify a specific person.";
 sem LeakAudit.safe = "True only if the summary contains nothing that could help identify the person: no names, street addresses, full ZIPs, phone numbers, employers, schools, or unusually specific details.";
-sem LeakAudit.leaks = "Each specific fragment of the summary that leaks identity. Empty when safe.";
+sem LeakAudit.leaks = "Each fragment you actually removed or rewrote in repaired_summary because it leaked identity. A fragment you decided to keep is NOT a leak -- do not list it. Every entry here must be absent from repaired_summary. Empty when safe.";
 sem LeakAudit.repaired_summary = "The summary rewritten to remove every leak while keeping the practical household constraints that matter for matching (household size, no transport, no cooking facilities, missing documents). If already safe, return it unchanged.";
 
 def audit_anonymization(original_text: str, proposed_summary: str) -> LeakAudit by llm(temperature=0.0);
@@ -470,11 +470,38 @@ def read_situation_safe(text: str) -> SituationRead {
 }
 
 
+"""Audit the summary, then drop any 'leak' the audit did not actually remove.
+
+Same shape as `judge_match_safe` clamping the model's unit allocation: the model
+is trusted to judge, never to be arithmetically right about its own output.
+
+The clamp exists because two prompts in this file disagree on purpose.
+`read_situation.anonymized_summary` is told to produce household constraints and
+its worked example literally starts "Household of 3", and
+`LeakAudit.repaired_summary` is told to KEEP household size because the matcher
+needs it -- while `LeakAudit.leaks` asks for anything identity-bearing. The model
+satisfies all three by listing "Household of 3" as a leak and leaving it in. The
+UI then tells the person a fragment was "caught and removed before any volunteer
+could see it" while that exact fragment is still in the text volunteers read.
+
+Being wrong in that direction is the worst option available to this app: it is a
+privacy assurance the system cannot keep. So a leak counts only if it is gone
+from what actually gets published. Substring, case-insensitive -- a fragment the
+auditor merely reworded still reads as removed, which is the honest answer, since
+the identifying form of it is no longer there.
+"""
 def audit_anonymization_safe(original_text: str, proposed_summary: str) -> LeakAudit {
     require_engine("audit_anonymization");
     try {
         _note("audit_anonymization");
-        return audit_anonymization(original_text, proposed_summary);
+        audit = audit_anonymization(original_text, proposed_summary);
+        published = audit.repaired_summary if audit.repaired_summary else proposed_summary;
+        low = published.lower();
+        audit.leaks = [
+            leak for leak in audit.leaks
+            if leak.strip() and leak.strip().lower() not in low
+        ];
+        return audit;
     } except Exception as e {
         _note_failure("audit_anonymization", str(e));
         raise;
