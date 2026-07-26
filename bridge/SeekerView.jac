@@ -1,57 +1,187 @@
-"""Bridge - the view for someone in an acute situation.
+"""Bridge - seeker chat and assistance page.
 
-One textarea in, a live plan out. The plan is not fetched once and frozen: this
-component polls `FulfillmentWalker`, which re-reads the graph every time. When a
-volunteer's `MatchWalker` attaches a `Matched` edge in a completely separate
-session, this view picks it up on the next tick with no push, no socket and no
-coordination between the two walkers.
+Center: ask for help, get expandable program suggestions. Accept moves a card
+into Ongoing; swipe left clears it into All past suggestions. Matched helper
+offers that are not yet redeemed also land under Ongoing.
 """
 
 import from react { useEffect }
-import from .components.Bits {
-    ActivityFeed, EngineBadge, NeedTile, Pill, PrivacyNote, Stat, StepRow,
-    StrategyCard
+import from .components.Suggestions {
+    ActionStep, OngoingPanel, Suggestion, SuggestionCard, demo_suggestions
 }
 
-sv import from .core.graph {
-    NeedCard, PlanStep, SeekerBoard, StrategyView, WalkerTrace
-}
+sv import from .core.graph { NeedCard, PlanStep, SeekerBoard }
 sv import from .core.walkers { FulfillmentWalker, IntakeWalker }
 
 
 glob EXAMPLE: str = "I need food for me and my two kids this week. I lost my ID when we left the apartment, I don't have a car, and where we're staying has no stove. We also got an eviction notice for the room we're in. Zip is 94110.";
 
 
-def:pub SeekerView(display_name: str) -> JsxElement {
+def sug_id(name: str) -> str {
+    raw = name.lower().replace(" ", "-").replace(",", "").replace(".", "");
+    return "org-" + raw[:48];
+}
+
+
+def step_to_suggestion(step: PlanStep) -> Suggestion {
+    name = step.org_name if step.org_name else step.title;
+    blocked = step.status == "blocked";
+    steps: list[ActionStep] = [];
+
+    if blocked {
+        if step.unblocks {
+            steps = steps + [ActionStep(text="To qualify: " + step.unblocks)];
+        }
+        blocker_l = step.blocker.lower() if step.blocker else "";
+        if "address" in blocker_l or "residency" in blocker_l or "proof" in blocker_l {
+            steps = steps + [ActionStep(
+                text="Quick check: do you have any mail with your name on it, or a signed letter from a shelter? Either usually counts."
+            )];
+        }
+        if "id" in blocker_l or "photo" in blocker_l {
+            steps = steps + [ActionStep(
+                text="Quick check: do you have any photo ID (even expired)? If not, get a free CA ID at the DMV on Fell St — fee waived with a shelter or clinic letter."
+            )];
+        }
+        if step.detail {
+            steps = steps + [ActionStep(text=step.detail)];
+        }
+    } else {
+        primary = step.detail if step.detail else "You look eligible — you can go ahead.";
+        steps = steps + [ActionStep(text=primary)];
+    }
+
+    link = "";
+    link_label = "";
+    if step.org_phone {
+        link = "tel:" + step.org_phone.replace(" ", "").replace("-", "");
+        link_label = "Call " + step.org_phone;
+        steps = steps + [ActionStep(
+            text="Call if you need hours or to confirm what to bring.",
+            link=link,
+            link_label=link_label
+        )];
+    }
+    if step.org_address {
+        steps = steps + [ActionStep(text="Go to " + step.org_address + ".")];
+    }
+
+    desc = (
+        "You don't qualify yet — follow the steps below, then you can use this program."
+        if blocked
+        else "You appear eligible for this program."
+    );
+    if step.reasoning and not blocked {
+        desc = step.reasoning;
+    }
+
+    return Suggestion(
+        id=sug_id(name),
+        name=name,
+        description=desc,
+        steps=steps,
+        kind="blocked" if blocked else "program",
+        badge="qualify first" if blocked else "eligible"
+    );
+}
+
+
+def board_to_suggestions(steps: list[PlanStep]) -> list[Suggestion] {
+    # One card per organisation (or title). Skip leftover document-only rows.
+    keys: list[str] = [];
+    for step in steps {
+        if step.category == "documents" {
+            continue;
+        }
+        key = step.org_name if step.org_name else step.title;
+        if key not in keys {
+            keys = keys + [key];
+        }
+    }
+
+    out: list[Suggestion] = [];
+    for key in keys {
+        group = [
+            s for s in steps
+            if s.category != "documents" and (s.org_name if s.org_name else s.title) == key
+        ];
+        if len(group) == 0 {
+            continue;
+        }
+        # Prefer a blocked row when mixed so qualify steps stay visible.
+        pick = group[0];
+        for s in group {
+            if s.status == "blocked" {
+                pick = s;
+                break;
+            }
+        }
+        out = out + [step_to_suggestion(pick)];
+    }
+    return out;
+}
+
+
+def need_to_suggestion(card: NeedCard) -> Suggestion {
+    who = card.matched_with if card.matched_with else "a community helper";
+    return Suggestion(
+        id="need-" + card.code,
+        name="Help from " + who,
+        description=card.summary,
+        steps=[
+            ActionStep(
+                text="A helper has offered to cover this. Confirm once you have received the help."
+            ),
+            ActionStep(
+                text=card.match_rationale if card.match_rationale else "Unconfirmed — still waiting on pickup or delivery."
+            )
+        ],
+        kind="helper",
+        badge="helper offer"
+    );
+}
+
+
+def:pub SeekerView(
+    display_name: str,
+    contact_method: str = "",
+    contact_value: str = "",
+    location: str = "",
+    panel: str = "home",
+    onHome: Callable[[], None] | None = None
+) -> JsxElement {
     has situation: str = "";
-    has steps: list[PlanStep] = [];
-    has needs: list[NeedCard] = [];
-    has activity: list[WalkerTrace] = [];
-    has headline: str = "";
-    has nudge: str = "";
-    has engine: str = "";
-    has has_plan: bool = False;
+    has inbox: list[Suggestion] = [];
+    has ongoing: list[Suggestion] = [];
+    has past: list[Suggestion] = [];
+    has ongoing_open: bool = True;
     has busy: bool = False;
     has error: str = "";
-
-    # The caseworker agent's brief (0 or 1), what the privacy auditor stripped,
-    # and the one question the agent decided was worth asking.
-    has strategy: list[StrategyView] = [];
+    has nudge: str = "";
     has clarify_question: str = "";
     has clarify_why: str = "";
-    has privacy_leaks: list[str] = [];
+    has clarify_reply: str = "";
 
-    # Engine evidence, rendered as a badge. `engine_calls` is the number that
-    # answers "is that really the model?" without anyone taking it on trust.
-    has engine_model: str = "";
-    has engine_reason: str = "";
-    has engine_calls: int = 0;
-    has engine_roles: list[str] = [];
+    # Refs survive the 3s poll closure so Accept/Dismiss are not overwritten.
+    has handled_ref: Ref[list[str]] = Ref([]);
+    has ongoing_ref: Ref[list[Suggestion]] = Ref([]);
+    has past_ref: Ref[list[Suggestion]] = Ref([]);
 
-    def apply(board: SeekerBoard) -> None;
+    def apply(board: SeekerBoard) -> int;
     async def refresh -> None;
     async def submit -> None;
+    async def submit_with(text: str) -> None;
     def use_example(e: MouseEvent) -> None;
+    def accept_item(sid: str) -> None;
+    def dismiss_item(sid: str) -> None;
+    def dismiss_ongoing(sid: str) -> None;
+    def toggle_ongoing -> None;
+    def go_home(e: MouseEvent) -> None;
+    def set_clarify_reply(e: ChangeEvent) -> None;
+    async def answer_clarify_yes(e: MouseEvent) -> None;
+    async def answer_clarify_no(e: MouseEvent) -> None;
+    async def send_clarify_reply -> None;
+    async def apply_clarify(ans: str) -> None;
 
     async can with entry {
         refresh();
@@ -62,127 +192,150 @@ def:pub SeekerView(display_name: str) -> JsxElement {
         return lambda { clearInterval(timer); };
     }, []);
 
-    covered = len([s for s in steps if s.status == "covered"]);
-    blocked = len([s for s in steps if s.status == "blocked"]);
-    actionable = len([s for s in steps if s.status == "open"]);
-
-    return <div className="wrap">
-        {if not has_plan {
-            <div className="card" key="intake" style={{"maxWidth": "720px", "margin": "0 auto"}}>
-                <div className="eyebrow">Tell us once</div>
-                <h1 style={{"fontSize": "24px", "margin": "8px 0 6px"}}>
-                    {"What's going on, " + display_name + "?"}
-                </h1>
-                <p className="muted small" style={{"marginBottom": "16px"}}>
-                    Plain words are fine. Bridge checks what each place near you actually
-                    requires at the door, and tells you the ones that would turn you away
-                    before you make the trip.
+    if panel == "settings" {
+        return <div className="wrap seeker-page">
+            <div className="chat-panel">
+                <button className="btn ghost sm" type="button" onClick={go_home}>← Back</button>
+                <h1 className="chat-heading" style={{"marginTop": "18px"}}>Settings</h1>
+                <p className="muted" style={{"marginTop": "8px"}}>
+                    Details from signup stay on your private profile.
                 </p>
-                <textarea
-                    className="field"
-                    value={situation}
-                    placeholder="I need food for me and my two kids this week..."
-                    onChange={lambda (e: ChangeEvent) { situation = e.target.value; }}
-                />
-                <div className="row" style={{"marginTop": "12px"}}>
-                    <button className="btn primary" onClick={submit} disabled={busy}>
-                        {"Building your plan..." if busy else "Build my plan"}
-                    </button>
-                    <button className="btn ghost sm" onClick={use_example}>Use the demo situation</button>
-                    <div className="spacer" style={{"flex": "1"}}></div>
-                    <EngineBadge
-                        mode={engine}
-                        model={engine_model}
-                        calls={engine_calls}
-                        reason={engine_reason}
-                        roles={engine_roles}
-                    />
+                <div className="card" style={{"marginTop": "18px"}}>
+                    <div className="eyebrow">Profile</div>
+                    <p style={{"marginTop": "8px"}}>{display_name}</p>
+                    <p className="small muted" style={{"marginTop": "6px"}}>Role: person in need</p>
+                    {if contact_value {
+                        <p className="small muted" key="c" style={{"marginTop": "6px"}}>
+                            {(contact_method if contact_method else "contact") + ": " + contact_value}
+                        </p>
+                    }}
+                    {if location {
+                        <p className="small muted" key="l" style={{"marginTop": "6px"}}>
+                            {"Location: " + location}
+                        </p>
+                    }}
                 </div>
-                {if error {
-                    <p className="err" key="e" style={{"marginTop": "10px"}}>{error}</p>
-                }}
             </div>
-            skip;
-        }}
+        </div>;
+    }
 
-        {if has_plan {
-            <div key="plan">
-                {if nudge {
-                    <div className="card" key="n" style={{
-                        "borderColor": "var(--ok)",
-                        "background": "#141a16",
-                        "marginBottom": "18px"
-                    }}>
-                        <div className="row">
-                            <span className="pill ok"><span className="dot"></span>update</span>
-                            <span style={{"fontSize": "15.5px"}}>{nudge}</span>
-                        </div>
-                    </div>
-                }}
-
-                <div className="card">
-                    <div className="row" style={{"justifyContent": "space-between", "alignItems": "flex-start"}}>
-                        <div className="eyebrow">Your situation</div>
-                        <EngineBadge
-                            mode={engine}
-                            model={engine_model}
-                            calls={engine_calls}
-                            reason={engine_reason}
-                            roles={engine_roles}
+    if panel == "past" {
+        return <div className="wrap seeker-page">
+            <div className="chat-panel">
+                <button className="btn ghost sm" type="button" onClick={go_home}>← Back</button>
+                <h1 className="chat-heading" style={{"marginTop": "18px"}}>All past suggestions</h1>
+                <p className="muted small" style={{"marginTop": "8px", "marginBottom": "18px"}}>
+                    Cleared items are kept here so you can revisit them later.
+                </p>
+                <div className="stack">
+                    {if len(past) == 0 {
+                        <p className="small muted" key="empty">Nothing cleared yet. Swipe a suggestion left to move it here.</p>
+                        skip;
+                    }}
+                    {for item in past {
+                        <SuggestionCard
+                            key={item.id}
+                            item={item}
+                            show_accept={False}
                         />
-                    </div>
-                    <h1 style={{"fontSize": "22px", "margin": "8px 0 10px"}}>{headline}</h1>
-                    <div className="stats">
-                        <Stat n={actionable} k="ready now"/>
-                        <Stat n={blocked} k="blocked"/>
-                        <Stat n={covered} k="covered by a donor"/>
-                    </div>
-                </div>
-
-                {if clarify_question {
-                    <div className="card" key="q" style={{"marginTop": "18px", "borderColor": "var(--cool)"}}>
-                        <div className="eyebrow">One question first</div>
-                        <p style={{"fontSize": "15.5px", "margin": "8px 0 6px"}}>{clarify_question}</p>
-                        <p className="small muted">{clarify_why}</p>
-                    </div>
-                }}
-
-                <div className="cols" style={{"marginTop": "22px"}}>
-                    <div>
-                        {for (i, brief) in enumerate(strategy) {
-                            <StrategyCard key={str(i)} brief={brief}/>
-                        }}
-
-                        <div className="section-title">
-                            Your plan
-                            <span className="hint">
-                                reasoned per place, re-ordered so blockers come first
-                            </span>
-                        </div>
-                        <div className="stack">
-                            {for (i, s) in enumerate(steps) {
-                                <StepRow key={str(i)} step={s} idx={i + 1}/>
-                            }}
-                        </div>
-
-                        <div className="section-title">
-                            Quietly asked on your behalf
-                            <span className="hint">
-                                no name, no address, no contact - this is all a volunteer ever sees
-                            </span>
-                        </div>
-                        <div className="grid">
-                            {for (i, n) in enumerate(needs) {
-                                <NeedTile key={str(i)} card={n}/>
-                            }}
-                        </div>
-                    </div>
-                    <div className="stack">
-                        <PrivacyNote leaks={privacy_leaks}/>
-                        <ActivityFeed items={activity}/>
-                    </div>
+                    }}
                 </div>
             </div>
-        }}
+        </div>;
+    }
+
+    return <div className="wrap seeker-page">
+        <div className="chat-panel">
+            <h1 className="chat-heading">How may you be assisted?</h1>
+            <p className="muted small" style={{"marginTop": "8px", "marginBottom": "16px"}}>
+                Describe what you need in plain words. Bridge returns programs you may qualify for.
+            </p>
+
+            <textarea
+                className="field chat-box"
+                value={situation}
+                placeholder="I need food for me and my two kids this week..."
+                onChange={lambda (e: ChangeEvent) { situation = e.target.value; }}
+            />
+
+            <div className="row" style={{"marginTop": "12px"}}>
+                <button className="btn primary" type="button" onClick={submit} disabled={busy}>
+                    {"Finding options..." if busy else "Send request"}
+                </button>
+                <button className="btn ghost sm" type="button" onClick={use_example}>
+                    Use demo request
+                </button>
+            </div>
+
+            {if error {
+                <p className="err" key="e" style={{"marginTop": "10px"}}>{error}</p>
+            }}
+
+            {if nudge {
+                <div className="card tight" key="n" style={{
+                    "borderColor": "var(--ok)",
+                    "background": "#141a16",
+                    "marginTop": "14px"
+                }}>
+                    <span className="pill ok"><span className="dot"></span>update</span>
+                    <span style={{"marginLeft": "8px", "fontSize": "14px"}}>{nudge}</span>
+                </div>
+            }}
+
+            {if clarify_question {
+                <div className="card tight" key="q" style={{"marginTop": "14px", "borderColor": "var(--cool)"}}>
+                    <div className="eyebrow">One question first</div>
+                    <p style={{"marginTop": "6px"}}>{clarify_question}</p>
+                    <p className="small muted">{clarify_why}</p>
+                    <div className="row" style={{"marginTop": "12px"}}>
+                        <button className="btn cool sm" type="button" onClick={answer_clarify_yes} disabled={busy}>
+                            Yes
+                        </button>
+                        <button className="btn ghost sm" type="button" onClick={answer_clarify_no} disabled={busy}>
+                            No
+                        </button>
+                    </div>
+                    <div className="row" style={{"marginTop": "10px", "alignItems": "stretch"}}>
+                        <input
+                            className="field"
+                            style={{"flex": "1"}}
+                            value={clarify_reply}
+                            placeholder="Or type a short answer..."
+                            onChange={set_clarify_reply}
+                        />
+                        <button className="btn primary sm" type="button" onClick={send_clarify_reply} disabled={busy}>
+                            Reply
+                        </button>
+                    </div>
+                </div>
+            }}
+
+            <div style={{"marginTop": "22px"}}>
+                <OngoingPanel
+                    items={ongoing}
+                    open={ongoing_open}
+                    onToggle={toggle_ongoing}
+                    onDismiss={dismiss_ongoing}
+                />
+            </div>
+
+            {if len(inbox) > 0 {
+                <div className="section-title" key="st">
+                    Suggested for you
+                    <span className="hint">tap to expand · swipe left to clear · accept to track</span>
+                </div>
+            }}
+            <div className="stack" style={{"gap": "10px"}}>
+                {for item in inbox {
+                    <SuggestionCard
+                        key={item.id}
+                        item={item}
+                        onAccept={accept_item}
+                        onDismiss={dismiss_item}
+                        show_accept={True}
+                    />
+                }}
+            </div>
+        </div>
     </div>;
 }

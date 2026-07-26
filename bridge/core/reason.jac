@@ -320,12 +320,12 @@ obj Clarification {
 }
 
 sem Clarification = "A decision about whether one more fact is worth asking for before building a plan.";
-sem Clarification.needed = "True only if a single missing fact would materially change which organisations this person should be sent to. False if the plan is already actionable -- someone in crisis should not be interrogated.";
-sem Clarification.question = "The one question to ask, in plain warm second-person language, under 20 words. Empty when not needed.";
-sem Clarification.why = "One short sentence explaining what the answer would change about the plan. Empty when not needed.";
+sem Clarification.needed = "True when a missing document or residency proof (photo ID, mail, shelter letter, eviction notice photo, phone access) would change whether they clear a local org's door. Also true when it is unclear if they already have that proof. False only when their assets already answer the gates or the available orgs are no-barrier.";
+sem Clarification.question = "The one question to ask, warm and concrete, under 22 words. Prefer yes/no about a specific document, e.g. 'Do you have any mail with your name, or a signed letter from a shelter?' Empty when not needed.";
+sem Clarification.why = "One short sentence on what the answer changes (which food bank or whether they must get an ID first). Empty when not needed.";
 
 def ask_clarifying(text: str, known_categories: str, known_assets: str) -> Clarification by llm(temperature=0.2);
-sem ask_clarifying = "Decide whether asking exactly one more question would materially improve this person's plan. Default to NOT asking -- only ask when the answer would change which orgs they are routed to.";
+sem ask_clarifying = "Ask at most one clarifying question when eligibility documents are unclear. Prefer questions about photo ID, mail/proof of address, or a signed shelter letter when food or residency-gated help is involved. Do not interrogate -- one concrete yes/no question.";
 sem ask_clarifying.text = "What the person said about their situation.";
 sem ask_clarifying.known_categories = "Categories of help already identified, comma-separated.";
 sem ask_clarifying.known_assets = "Documents and resources they already confirmed having, comma-separated.";
@@ -343,8 +343,8 @@ obj EligibilityVerdict {
 
 sem EligibilityVerdict = "A judgement about whether one person clears one specific eligibility gate.";
 sem EligibilityVerdict.satisfied = "True only if the person's stated situation clearly already satisfies the requirement. If it is unclear or unstated, answer False -- being told about a gate early is the whole point.";
-sem EligibilityVerdict.reasoning = "One short sentence, addressed to the person, explaining why. Reference what they actually said.";
-sem EligibilityVerdict.unblock_action = "If not satisfied: the single most concrete next action that would clear this gate, phrased as an instruction under 20 words. If satisfied: an empty string.";
+sem EligibilityVerdict.reasoning = "One short sentence, addressed to the person, explaining why they do or do not qualify. Reference what they actually said.";
+sem EligibilityVerdict.unblock_action = "If not satisfied: the simplest concrete steps to qualify, under 30 words, using the published workaround when given. Example: 'Ask the shelter front desk for a signed letter, or bring any mail with your name on it.' If satisfied: an empty string.";
 
 def judge_requirement(
     situation: str,
@@ -353,12 +353,12 @@ def judge_requirement(
     requirement_kind: str,
     workaround: str
 ) -> EligibilityVerdict by llm(temperature=0.1);
-sem judge_requirement = "Decide whether this person's situation satisfies this organisation's eligibility requirement, and if not, what single action would unblock them.";
+sem judge_requirement = "Decide whether this person already qualifies for this organisation's requirement. If not, tell them the specific simple steps to qualify (how to get a shelter letter, free ID, etc.) using the published workaround. Never leave them with only the requirement name.";
 sem judge_requirement.situation = "The person's own description of their circumstances.";
 sem judge_requirement.assets = "Comma-separated list of documents and resources the person confirmed they have.";
 sem judge_requirement.requirement = "The requirement the organisation enforces.";
 sem judge_requirement.requirement_kind = "Category of the requirement: 'document', 'residency', 'income', or 'appointment'.";
-sem judge_requirement.workaround = "The known way to satisfy this requirement, if the organisation publishes one.";
+sem judge_requirement.workaround = "The known way to satisfy this requirement, if the organisation publishes one. Prefer this wording when writing unblock_action.";
 
 
 # ===========================================================================

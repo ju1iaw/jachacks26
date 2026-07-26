@@ -81,7 +81,10 @@ def:protect me -> AccountView {
         engine_model=rep.model,
         engine_reason=rep.reason,
         engine_calls=rep.calls,
-        engine_roles=rep.roles
+        engine_roles=rep.roles,
+        contact_method=acct.contact_method if acct is not None else "",
+        contact_value=acct.contact_value if acct is not None else "",
+        location=acct.location if acct is not None else ""
     );
 }
 
@@ -117,7 +120,10 @@ def:protect choose_role(
         engine_model=rep.model,
         engine_reason=rep.reason,
         engine_calls=rep.calls,
-        engine_roles=rep.roles
+        engine_roles=rep.roles,
+        contact_method=acct.contact_method,
+        contact_value=acct.contact_value,
+        location=acct.location
     );
 }
 

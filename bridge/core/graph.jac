@@ -351,6 +351,9 @@ obj AccountView {
     has engine_reason: str = "";
     has engine_calls: int = 0;
     has engine_roles: list[str] = [];
+    has contact_method: str = "";
+    has contact_value: str = "";
+    has location: str = "";
 }
 
 

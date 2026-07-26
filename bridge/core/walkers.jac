@@ -246,40 +246,54 @@ walker:protect EligibilityPathWalker {
             }
         }
 
-        # The blocker-clearing steps go IN FRONT of the org they unblock.
-        for pair in unblocks {
-            parts = pair.split("||");
-            fix = person +>:HasStep:+> PlanStep(
-                title=f"First: {parts[0].lower()}",
-                detail=parts[1],
-                category="documents",
-                status="open",
-                org_name=here.name,
-                unblocks=here.name,
-                unblock_category=here.category,
-                reasoning=f"{here.name} turns people away at the door without this.",
-                engine=engine(),
-                rank=base - 5
-            );
-            self.made.append(fix);
-        }
-
+        # One PlanStep per org. Qualify-first actions are folded into that
+        # card so the seeker never sees three conflicting Mission Food Bank rows.
         blocked_now = len(blockers) > 0;
         if blocked_now {
             self.blocked += 1;
         }
+
+        qualify_bits: list[str] = [];
+        for pair in unblocks {
+            parts = pair.split("||");
+            if len(parts) > 1 and parts[1] {
+                qualify_bits.append(parts[1]);
+            }
+        }
+        visit_line = f"{here.address} - {here.hours}. {here.notes}";
+        if blocked_now and qualify_bits {
+            detail = (
+                "You do not qualify yet. Do this first: "
+                + " ".join(qualify_bits)
+                + " Then go to: "
+                + visit_line
+            );
+        } elif blocked_now {
+            detail = (
+                "You do not qualify yet — you still need: "
+                + ", ".join(blockers)
+                + ". Then go to: "
+                + visit_line
+            );
+        } else {
+            detail = "You look eligible. " + visit_line;
+        }
+
+        first_unblock = qualify_bits[0] if qualify_bits else "";
         step = person +>:HasStep:+> PlanStep(
             title=here.name,
-            detail=f"{here.address} - {here.hours}. {here.notes}",
+            detail=detail,
             category=here.category,
             status="blocked" if blocked_now else "open",
             org_name=here.name,
             org_address=here.address,
             org_phone=here.phone,
             blocker=", ".join(blockers),
+            unblocks=first_unblock,
+            unblock_category=here.category if blocked_now else "",
             reasoning=" ".join(notes) if notes else "No eligibility gates -- you can just show up.",
             engine=engine(),
-            rank=base
+            rank=base - 5 if blocked_now else base
         );
         self.made.append(step);
     }
