@@ -236,6 +236,16 @@ def all_orgs -> list[Org] {
 }
 
 
+"""Organisations in a category, narrowed to a service area when one is known.
+
+An empty `zip_prefix` means "area unknown", and the tier-1 filter is skipped --
+so this returns organisations the person may well not qualify for. That is the
+deliberate choice (showing everything beats showing nothing), but it is only
+safe because it is never silent: `IntakeWalker` logs the unfiltered case, and
+`core/geo.jac` returns "" rather than guessing a nearby prefix precisely so this
+branch is reached honestly instead of being hidden behind a wrong-but-plausible
+area.
+"""
 def orgs_for(category: str, zip_prefix: str, max_tier: int) -> list[Org] {
     hits: list[Org] = [];
     for org in all_orgs() {
