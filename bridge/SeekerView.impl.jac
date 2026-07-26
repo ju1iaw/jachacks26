@@ -15,7 +15,6 @@ impl SeekerView.apply(board: SeekerBoard) -> None {
     engine_model = board.engine_model;
     engine_reason = board.engine_reason;
     engine_calls = board.engine_calls;
-    engine_fallbacks = board.engine_fallbacks;
     engine_roles = board.engine_roles;
 }
 
@@ -50,7 +49,12 @@ impl SeekerView.submit -> None {
             apply(result.reports[0]);
         }
     } except Exception as e {
-        error = "Something went wrong building the plan: " + str(e);
+        raw = str(e);
+        if "ENGINE_UNAVAILABLE" in raw {
+            error = "Bridge has no working model connection right now, so a plan can't be built. Add an API key on the server and try again.";
+        } else {
+            error = "Something went wrong building the plan. Try again in a moment.";
+        }
     }
     busy = False;
 }

@@ -16,11 +16,21 @@ import from core.walkers {
     CommunityBoard, EligibilityPathWalker, FollowUpWalker, FulfillmentWalker,
     IntakeWalker, MatchWalker, NeedBroadcastWalker, PledgeWalker, StrategyWalker
 }
+import from core.reason { ensure_engine }
 
 
 # Plant the orgs and their eligibility gates once, at boot.
 with entry {
     bootstrap();
+
+    # Fail loudly in the server log at startup, not just on the first request.
+    # There is no fallback path in this app -- if this prints "unconfigured",
+    # every feature that touches the model will error until a key is set.
+    mode = ensure_engine();
+    if mode != "llm" {
+        print(f"[bridge] *** starting with NO working model connection (mode={mode}) ***");
+        print("[bridge] *** set OPENAI_API_KEY / ANTHROPIC_API_KEY / GOOGLE_API_KEY and restart ***");
+    }
 }
 
 

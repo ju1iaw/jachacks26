@@ -1,8 +1,9 @@
 """Bridge - the reasoning layer.
 
-Every judgement Bridge makes about a human being is made by a model, not by a
-keyword table. There are **eight distinct LLM roles** here, deliberately not one
-prompt reused eight times:
+Every judgement Bridge makes about a human being is made by the model. There is
+no keyword table, no regex, no substitute answer anywhere in this file. There
+are **eight distinct LLM roles**, deliberately not one prompt reused eight
+times:
 
   1. `read_situation`      -- free text -> structured facts + an anonymized
                               one-liner. The anonymization is a reasoning step.
@@ -26,25 +27,24 @@ prompt reused eight times:
 
 ## Engine honesty
 
-The old version of this file decided whether the model was available by checking
-whether an env var was *set*. That is not the same question as whether the model
-*works*, and it meant a typo'd key silently served regex output that looked like
-reasoning. Now:
+`ensure_engine()` makes one real structured `by llm()` call at boot and only
+reports `llm` if the model round-trips a typed object successfully. Every call
+site is guarded by `require_engine()`, which **raises** the moment the engine
+is not configured -- there is no code path in which a missing key produces an
+answer. If a role's own call fails after that (a bad key, a rate limit, a
+network blip), the real provider error is recorded and re-raised verbatim; it
+is never swallowed and never replaced with a guess.
 
-  * `ensure_engine()` makes one real structured `by llm()` call at boot and only
-    reports `llm` if the model round-trips a typed object successfully.
-  * every fallback increments a counter, logs loudly, and shows up in the UI as
-    DEGRADED with the actual provider error attached.
-  * `BRIDGE_STRICT_LLM=1` makes the fallbacks *raise* instead of substituting, so
-    there is a mode in which no answer can possibly be heuristic.
-
-The deterministic fallbacks below still exist -- a dead API key should not kill a
-live demo -- but they are an explicitly-labelled degradation, never a peer of the
-model.
+A single failed call does NOT permanently downgrade the engine. `ENGINE.mode`
+is decided once, at the boot-time preflight, from whether a working model
+connection exists at all; a later transient failure updates `ENGINE.reason` and
+`ENGINE.failures` for display and is re-raised for that one caller, but the
+next request tries the real model again. Conflating "one call failed" with "the
+model is gone" used to mean a single rate-limit blip could brick every feature
+until the process restarted -- that bug is fixed here.
 """
 
 import os;
-import re;
 import from jaclang.byllm.lib { Model }
 
 
@@ -60,7 +60,6 @@ obj EngineState {
     has reason: str = "";
     has calls: int = 0;
     has failures: int = 0;
-    has fallbacks: int = 0;
     has checked: bool = False;
 }
 
@@ -86,6 +85,13 @@ UI without creating a circular import.
 """
 glob DEGRADE_LOG: list[str] = [];
 
+"""Marker prefix on every error raised for a missing/broken engine.
+
+Client code matches on this exact string to tell "the model is not configured"
+apart from an ordinary transient failure, without parsing prose.
+"""
+glob ENGINE_UNAVAILABLE_TAG: str = "ENGINE_UNAVAILABLE";
+
 
 def has_key -> bool {
     for var in _KEY_VARS {
@@ -94,11 +100,6 @@ def has_key -> bool {
         }
     }
     return False;
-}
-
-
-def strict_mode -> bool {
-    return os.environ.get("BRIDGE_STRICT_LLM", "") not in ["", "0", "false", "False"];
 }
 
 
@@ -128,7 +129,7 @@ def _short(text: str) -> str {
 def _push_degrade(where: str, detail: str) {
     line = f"{where}: {detail}";
     DEGRADE_LOG.append(line);
-    print(f"[bridge] DEGRADED -- {line}");
+    print(f"[bridge] {line}");
 }
 
 
@@ -146,23 +147,15 @@ def _note(role: str) {
 }
 
 
-def _degrade(role: str, err: str) {
+"""Record that ONE call to `role` failed, without downgrading the whole engine.
+
+`ENGINE.mode` is not touched here -- see the module docstring. This only updates
+the counters and the display reason, then the caller re-raises.
+"""
+def _note_failure(role: str, err: str) {
     ENGINE.failures += 1;
-    ENGINE.mode = "degraded";
     ENGINE.reason = _short(err);
     _push_degrade(role, ENGINE.reason);
-}
-
-
-def _fallback_used(role: str) {
-    ENGINE.fallbacks += 1;
-    if strict_mode() {
-        raise RuntimeError(
-            f"BRIDGE_STRICT_LLM is set, so role '{role}' refuses to answer "
-            f"heuristically. Engine is '{ENGINE.mode}': {ENGINE.reason}"
-        );
-    }
-    _push_degrade(role, "answered by deterministic fallback, NOT the model");
 }
 
 
@@ -188,7 +181,8 @@ sem _preflight_probe.token = "An arbitrary token. Its content does not matter.";
 
 A *typed* probe on purpose: it exercises the whole byLLM path -- auth, request,
 schema injection and structured-output parsing -- so a success here means the
-eight real roles will also parse, not just that a socket opened.
+eight real roles will also parse, not just that a socket opened. Runs once per
+process; call `ensure_engine()` freely, it is idempotent after the first check.
 """
 def ensure_engine -> str {
     if ENGINE.checked {
@@ -245,6 +239,24 @@ def engine_state -> EngineState {
 
 def role_calls -> dict[str, int] {
     return ROLE_CALLS;
+}
+
+
+"""Refuse to proceed unless there is a real, working model connection.
+
+Every `_safe` wrapper in this file calls this FIRST, before anything else runs
+-- so a missing key fails immediately and loudly, before any graph mutation,
+rather than partway through one. There is no fallback path after this raises.
+"""
+def require_engine(role: str) {
+    if not live() {
+        why = ENGINE.reason if ENGINE.reason else "no model API key configured";
+        raise RuntimeError(
+            f"{ENGINE_UNAVAILABLE_TAG}: Bridge has no working model connection ({why}). "
+            "Set OPENAI_API_KEY (or ANTHROPIC_API_KEY / GOOGLE_API_KEY) and restart the "
+            f"server. '{role}' only ever answers from the model -- there is no fallback."
+        );
+    }
 }
 
 
@@ -430,450 +442,46 @@ sem next_step_nudge.next_open_step = "The title of the next still-open step in t
 
 
 # ===========================================================================
-# Deterministic fallbacks
-# ===========================================================================
-#
-# These are a LAST RESORT, not a peer of the model. Every one of them runs only
-# after `_fallback_used()` has logged that the model is not answering, and under
-# BRIDGE_STRICT_LLM they never run at all. They exist so a dead key at 3:59pm
-# does not take the whole demo down with it.
-
-glob _CANON: list[str] = ["food", "shelter", "legal", "jobs"];
-
-glob _CATEGORY_WORDS: dict[str, list[str]] = {
-    "food": [
-        "food", "eat", "eating", "groceries", "grocery", "hungry", "hunger",
-        "meal", "meals", "pantry", "snap", "ebt", "formula", "fed", "feed"
-    ],
-    "shelter": [
-        "evict", "eviction", "evicted", "rent", "homeless", "shelter",
-        "housing", "sleep", "sleeping", "landlord", "apartment", "motel",
-        "couch", "utilities", "electricity", "heat",
-        # "car" alone is a constraint ("no car"), not a housing signal -- only
-        # living in one is. Matching bare "car" used to rank a food emergency as
-        # shelter-first.
-        "in my car", "in the car", "living in my car", "sleeping in my car"
-    ],
-    "legal": [
-        "legal", "lawyer", "attorney", "court", "hearing", "notice", "sued",
-        "custody", "immigration", "ice", "warrant", "ticket", "record",
-        "expunge", "evict", "eviction", "landlord"
-    ],
-    "jobs": [
-        "job", "jobs", "work", "employment", "unemployed", "laid off",
-        "fired", "hire", "hiring", "resume", "interview", "income", "paycheck"
-    ]
-};
-
-glob _ASSET_WORDS: dict[str, list[str]] = {
-    "state photo ID": ["photo id", "state id", "drivers license", "driver's license", "id card"],
-    "proof of address": ["proof of address", "lease", "utility bill", "mail"],
-    "social security card": ["social security", "ssn", "ss card"],
-    "car": ["car", "vehicle", "truck", "drive"],
-    "phone": ["phone", "cell", "mobile"],
-    "bank account": ["bank account", "checking", "direct deposit"]
-};
-
-glob _CRITICAL_WORDS: list[str] = [
-    "today", "tonight", "tomorrow", "right now", "nothing to eat",
-    "no food", "out of food", "evicted", "on the street", "emergency"
-];
-
-glob _HIGH_WORDS: list[str] = [
-    "this week", "few days", "eviction notice", "shut off", "running out",
-    "almost out", "behind on"
-];
-
-glob _NEGATIONS: list[str] = ["no ", "not ", "don't", "dont", "without", "lost my", "lost the", "never had"];
-
-glob _CATEGORY_LABEL: dict[str, str] = {
-    "food": "groceries",
-    "shelter": "a safe place to stay",
-    "legal": "legal help",
-    "jobs": "work"
-};
-
-
-def _mentions(text: str, phrase: str) -> bool {
-    return phrase in text;
-}
-
-
-"""True when the phrase shows up right after a negation -- 'no photo ID'."""
-def _negated_near(text: str, phrase: str) -> bool {
-    idx = text.find(phrase);
-    while idx != -1 {
-        window = text[max(0, idx - 22):idx];
-        for neg in _NEGATIONS {
-            if neg in window {
-                return True;
-            }
-        }
-        idx = text.find(phrase, idx + 1);
-    }
-    return False;
-}
-
-
-def _canon_rank(cat: str) -> int {
-    return _CANON.index(cat) if cat in _CANON else len(_CANON);
-}
-
-
-def heuristic_read(text: str) -> SituationRead {
-    low = text.lower();
-
-    scored: list[list] = [];
-    for (cat, words) in _CATEGORY_WORDS.items() {
-        hits = len([w for w in words if _mentions(low, w)]);
-        if hits > 0 {
-            scored.append([hits, cat]);
-        }
-    }
-    # Most hits first, ties broken by canonical need order (food, shelter,
-    # legal, jobs). The old `sort(reverse=True)` broke ties reverse-
-    # alphabetically, which ranked "shelter" above "food" on an equal score and
-    # greeted a food emergency with "let's get you a safe place to stay".
-    scored.sort(key=lambda (row: list) -> list {
-        return [-(row[0] as int), _canon_rank(row[1] as str)];
-    });
-    categories = [row[1] as str for row in scored];
-    if not categories {
-        categories = ["food"];
-    }
-
-    household = 1;
-    kids = re.search(r"(\d+)\s*(kids|children|kid|child)", low);
-    words_to_n = {"two": 2, "three": 3, "four": 4, "five": 5, "six": 6};
-    if kids {
-        household = int(kids.group(1)) + 1;
-    } else {
-        for (word, n) in words_to_n.items() {
-            if re.search(word + r"\s*(kids|children|kid|child)", low) {
-                household = n + 1;
-            }
-        }
-    }
-    people = re.search(r"(?:family of|household of)\s*(\d+)", low);
-    if people {
-        household = int(people.group(1));
-    }
-
-    zip_prefix = "";
-    zm = re.search(r"\b(\d{3})\d{0,2}x*\b", low);
-    if zm {
-        zip_prefix = zm.group(1);
-    }
-
-    assets: list[str] = [];
-    for (asset, phrases) in _ASSET_WORDS.items() {
-        for phrase in phrases {
-            if _mentions(low, phrase) and not _negated_near(low, phrase) {
-                assets.append(asset);
-                break;
-            }
-        }
-    }
-
-    urgency = "medium";
-    for word in _HIGH_WORDS {
-        if word in low { urgency = "high"; }
-    }
-    for word in _CRITICAL_WORDS {
-        if word in low { urgency = "critical"; }
-    }
-
-    wants = " and ".join([_CATEGORY_LABEL.get(c, c) for c in categories[:2]]);
-    who = "Household of " + str(household) if household > 1 else "One adult";
-    limits: list[str] = [];
-    if "no car" in low or "without a car" in low or "no vehicle" in low {
-        limits.append("no transport");
-    }
-    if "no stove" in low or "no kitchen" in low or "can't cook" in low or "no way to cook" in low {
-        limits.append("no way to cook");
-    }
-    if "no id" in low or "no photo id" in low or "lost my id" in low {
-        limits.append("no photo ID");
-    }
-    tail = "; " + ", ".join(limits) if limits else "";
-    summary = f"{who}{tail}.";
-
-    return SituationRead(
-        categories=categories,
-        urgency=urgency,
-        household=household,
-        zip_prefix=zip_prefix,
-        assets=assets,
-        anonymized_summary=summary,
-        headline=f"Let's get you {wants}. Here is the fastest path from where you are."
-    );
-}
-
-
-glob _LEAK_PATTERNS: list[list[str]] = [
-    ["phone number", r"\b\d{3}[-.\s]?\d{3}[-.\s]?\d{4}\b"],
-    ["full ZIP", r"\b\d{5}\b"],
-    ["street address", r"\b\d{2,6}\s+[A-Z][a-z]+\s+(St|Street|Ave|Avenue|Rd|Road|Blvd|Way|Dr|Drive)\b"],
-    ["email address", r"\b[\w.]+@[\w.]+\b"]
-];
-
-
-def heuristic_audit(original_text: str, proposed_summary: str) -> LeakAudit {
-    leaks: list[str] = [];
-    repaired = proposed_summary;
-    for pair in _LEAK_PATTERNS {
-        hit = re.search(pair[1], repaired);
-        if hit {
-            leaks.append(f"{pair[0]}: {hit.group(0)}");
-            repaired = repaired.replace(hit.group(0), "[redacted]");
-        }
-    }
-    # Any capitalised word from the original that survived into the summary and
-    # is not a known constraint word is treated as a possible name.
-    safe_words = [
-        "Household", "One", "No", "Needs", "Family", "Adult", "Adults",
-        "Children", "Child", "Kids"
-    ];
-    for token in re.findall(r"\b[A-Z][a-z]{2,}\b", proposed_summary) {
-        if token not in safe_words and token in original_text {
-            leaks.append(f"possible name: {token}");
-            repaired = repaired.replace(token, "[redacted]");
-        }
-    }
-    return LeakAudit(safe=not leaks, leaks=leaks, repaired_summary=repaired);
-}
-
-
-def heuristic_clarify(text: str, known_categories: str, known_assets: str) -> Clarification {
-    low = text.lower();
-    if "food" in known_categories and "no way to cook" not in low and "stove" not in low {
-        return Clarification(
-            needed=True,
-            question="Do you have a working stove and fridge where you're staying?",
-            why="It decides whether to send fresh groceries or ready-to-eat meals."
-        );
-    }
-    if not known_assets or known_assets == "nothing confirmed" {
-        return Clarification(
-            needed=True,
-            question="Do you have a photo ID on you right now?",
-            why="Most food banks turn people away at the door without one."
-        );
-    }
-    return Clarification(needed=False, question="", why="");
-}
-
-
-def heuristic_requirement(
-    situation: str,
-    assets: str,
-    requirement: str,
-    requirement_kind: str,
-    workaround: str
-) -> EligibilityVerdict {
-    low = situation.lower();
-    have = assets.lower();
-    req = requirement.lower();
-
-    if requirement_kind == "income" {
-        return EligibilityVerdict(
-            satisfied=True,
-            reasoning="This one is self-attested -- you state your income, no paperwork up front.",
-            unblock_action=""
-        );
-    }
-
-    if requirement_kind == "residency" {
-        return EligibilityVerdict(
-            satisfied=True,
-            reasoning="You are inside their service area, so residency is covered.",
-            unblock_action=""
-        );
-    }
-
-    if requirement_kind == "appointment" {
-        return EligibilityVerdict(
-            satisfied=False,
-            reasoning="They only take people who have booked ahead -- walk-ins get turned away.",
-            unblock_action=workaround if workaround else "Call ahead and book the earliest slot they have."
-        );
-    }
-
-    # document
-    stop = ["with", "that", "they", "your", "this", "from", "have", "must", "under", "each", "will", "when", "issued"];
-    req_tokens = [t for t in re.split(r"[^a-z]+", req) if len(t) > 3 and t not in stop];
-    have_tokens = [t for t in re.split(r"[^a-z]+", have) if t];
-    overlap = len([t for t in req_tokens if t in have_tokens]);
-    if req_tokens and overlap >= max(1, len(req_tokens) // 2) and not _negated_near(low, req) {
-        return EligibilityVerdict(
-            satisfied=True,
-            reasoning=f"You already said you have this, so \"{requirement}\" is not a blocker.",
-            unblock_action=""
-        );
-    }
-    return EligibilityVerdict(
-        satisfied=False,
-        reasoning=f"They ask for \"{requirement}\" at the door, and you have not said you have it.",
-        unblock_action=workaround if workaround else f"Get \"{requirement}\" before you go -- otherwise you will be turned away."
-    );
-}
-
-
-glob _KIND_FIT: dict[str, list[str]] = {
-    "food": ["food", "funds", "goods"],
-    "shelter": ["funds", "goods", "time"],
-    "legal": ["time", "funds"],
-    "jobs": ["time", "goods", "funds"]
-};
-
-glob _UNUSABLE: dict[str, list[str]] = {
-    "no way to cook": ["dry", "raw", "uncooked", "rice", "beans", "pasta", "flour", "requires cooking", "stove"],
-    "no transport": ["pickup only", "pick up only", "collect from"]
-};
-
-
-def heuristic_match(
-    need_summary: str,
-    need_category: str,
-    household: int,
-    pledge_kind: str,
-    pledge_description: str,
-    pledge_notes: str,
-    remaining_units: int
-) -> MatchVerdict {
-    if remaining_units <= 0 {
-        return MatchVerdict(fits=False, score=0, units=0, rationale="Pledge is fully allocated.");
-    }
-
-    allowed = _KIND_FIT.get(need_category, []) as list[str];
-    if pledge_kind not in allowed {
-        return MatchVerdict(
-            fits=False,
-            score=5,
-            units=0,
-            rationale=f"A {pledge_kind} pledge does not address a {need_category} need."
-        );
-    }
-
-    summary = need_summary.lower();
-    blob = (pledge_description + " " + pledge_notes).lower();
-
-    score = 55;
-    if pledge_kind == need_category { score += 20; }
-
-    # the interesting bit: usability against the household's stated constraints
-    blocked = "";
-    for (constraint, words) in _UNUSABLE.items() {
-        if constraint in summary {
-            for w in words {
-                if w in blob {
-                    blocked = constraint;
-                }
-            }
-        }
-    }
-    if blocked {
-        return MatchVerdict(
-            fits=False,
-            score=15,
-            units=0,
-            rationale=f"Technically the right category, but unusable for this household ({blocked})."
-        );
-    }
-
-    if "ready to eat" in blob or "ready-to-eat" in blob or "prepared" in blob or "no cooking" in blob {
-        if "no way to cook" in summary { score += 25; }
-    }
-    if "delivery" in blob or "deliver" in blob {
-        if "no transport" in summary { score += 15; }
-    }
-
-    units = min(remaining_units, max(1, household));
-    score = min(score, 97);
-    return MatchVerdict(
-        fits=True,
-        score=score,
-        units=units,
-        rationale=f"{pledge_description} covers a household of {household} in this category, with {remaining_units} units on hand."
-    );
-}
-
-
-def heuristic_escalation(
-    summary: str,
-    category: str,
-    urgency: str,
-    hours_open: int,
-    prior_escalations: int,
-    orgs_already_reached: str
-) -> EscalationPlan {
-    _ = (summary, urgency, orgs_already_reached);
-    second = "";
-    if category == "shelter" and prior_escalations >= 1 {
-        second = "legal";
-    } elif category == "food" and prior_escalations >= 2 {
-        second = "jobs";
-    }
-    return EscalationPlan(
-        widen_radius=True,
-        reword_as="",
-        also_try_category=second,
-        reasoning=f"Unanswered for {hours_open}h after {prior_escalations} escalation(s) -- widening the radius."
-    );
-}
-
-
-def heuristic_nudge(resolved: str, next_open_step: str) -> str {
-    if next_open_step {
-        return f"Good news -- {resolved} is covered. Next up: {next_open_step}.";
-    }
-    return f"Good news -- {resolved} is covered. Nothing else is blocking you right now.";
-}
-
-
-# ===========================================================================
 # Safe wrappers -- the ONLY entry points walkers should call
 # ===========================================================================
+#
+# Every one of these: (1) requires a live engine or raises immediately, (2) on
+# a real call failure, records it for the UI and re-raises the actual provider
+# error verbatim. Nothing here ever returns a substitute answer.
 
 def read_situation_safe(text: str) -> SituationRead {
-    if live() {
-        try {
-            _note("read_situation");
-            return read_situation(text);
-        } except Exception as e {
-            _degrade("read_situation", str(e));
-        }
+    require_engine("read_situation");
+    try {
+        _note("read_situation");
+        return read_situation(text);
+    } except Exception as e {
+        _note_failure("read_situation", str(e));
+        raise;
     }
-    _fallback_used("read_situation");
-    return heuristic_read(text);
 }
 
 
 def audit_anonymization_safe(original_text: str, proposed_summary: str) -> LeakAudit {
-    if live() {
-        try {
-            _note("audit_anonymization");
-            return audit_anonymization(original_text, proposed_summary);
-        } except Exception as e {
-            _degrade("audit_anonymization", str(e));
-        }
+    require_engine("audit_anonymization");
+    try {
+        _note("audit_anonymization");
+        return audit_anonymization(original_text, proposed_summary);
+    } except Exception as e {
+        _note_failure("audit_anonymization", str(e));
+        raise;
     }
-    _fallback_used("audit_anonymization");
-    return heuristic_audit(original_text, proposed_summary);
 }
 
 
 def ask_clarifying_safe(text: str, known_categories: str, known_assets: str) -> Clarification {
-    if live() {
-        try {
-            _note("ask_clarifying");
-            return ask_clarifying(text, known_categories, known_assets);
-        } except Exception as e {
-            _degrade("ask_clarifying", str(e));
-        }
+    require_engine("ask_clarifying");
+    try {
+        _note("ask_clarifying");
+        return ask_clarifying(text, known_categories, known_assets);
+    } except Exception as e {
+        _note_failure("ask_clarifying", str(e));
+        raise;
     }
-    _fallback_used("ask_clarifying");
-    return heuristic_clarify(text, known_categories, known_assets);
 }
 
 
@@ -884,16 +492,14 @@ def judge_requirement_safe(
     requirement_kind: str,
     workaround: str
 ) -> EligibilityVerdict {
-    if live() {
-        try {
-            _note("judge_requirement");
-            return judge_requirement(situation, assets, requirement, requirement_kind, workaround);
-        } except Exception as e {
-            _degrade("judge_requirement", str(e));
-        }
+    require_engine("judge_requirement");
+    try {
+        _note("judge_requirement");
+        return judge_requirement(situation, assets, requirement, requirement_kind, workaround);
+    } except Exception as e {
+        _note_failure("judge_requirement", str(e));
+        raise;
     }
-    _fallback_used("judge_requirement");
-    return heuristic_requirement(situation, assets, requirement, requirement_kind, workaround);
 }
 
 
@@ -906,24 +512,19 @@ def judge_match_safe(
     pledge_notes: str,
     remaining_units: int
 ) -> MatchVerdict {
-    if live() {
-        try {
-            _note("judge_match");
-            verdict = judge_match(
-                need_summary, need_category, household,
-                pledge_kind, pledge_description, pledge_notes, remaining_units
-            );
-            verdict.units = max(0, min(verdict.units, remaining_units));
-            return verdict;
-        } except Exception as e {
-            _degrade("judge_match", str(e));
-        }
+    require_engine("judge_match");
+    try {
+        _note("judge_match");
+        verdict = judge_match(
+            need_summary, need_category, household,
+            pledge_kind, pledge_description, pledge_notes, remaining_units
+        );
+        verdict.units = max(0, min(verdict.units, remaining_units));
+        return verdict;
+    } except Exception as e {
+        _note_failure("judge_match", str(e));
+        raise;
     }
-    _fallback_used("judge_match");
-    return heuristic_match(
-        need_summary, need_category, household,
-        pledge_kind, pledge_description, pledge_notes, remaining_units
-    );
 }
 
 
@@ -935,35 +536,29 @@ def escalation_strategy_safe(
     prior_escalations: int,
     orgs_already_reached: str
 ) -> EscalationPlan {
-    if live() {
-        try {
-            _note("escalation_strategy");
-            return escalation_strategy(
-                summary, category, urgency, hours_open,
-                prior_escalations, orgs_already_reached
-            );
-        } except Exception as e {
-            _degrade("escalation_strategy", str(e));
-        }
+    require_engine("escalation_strategy");
+    try {
+        _note("escalation_strategy");
+        return escalation_strategy(
+            summary, category, urgency, hours_open,
+            prior_escalations, orgs_already_reached
+        );
+    } except Exception as e {
+        _note_failure("escalation_strategy", str(e));
+        raise;
     }
-    _fallback_used("escalation_strategy");
-    return heuristic_escalation(
-        summary, category, urgency, hours_open, prior_escalations, orgs_already_reached
-    );
 }
 
 
 def next_step_nudge_safe(resolved: str, next_open_step: str) -> str {
-    if live() {
-        try {
-            _note("next_step_nudge");
-            return next_step_nudge(resolved, next_open_step);
-        } except Exception as e {
-            _degrade("next_step_nudge", str(e));
-        }
+    require_engine("next_step_nudge");
+    try {
+        _note("next_step_nudge");
+        return next_step_nudge(resolved, next_open_step);
+    } except Exception as e {
+        _note_failure("next_step_nudge", str(e));
+        raise;
     }
-    _fallback_used("next_step_nudge");
-    return heuristic_nudge(resolved, next_open_step);
 }
 
 

@@ -127,20 +127,19 @@ def:pub NeedTile(card: NeedCard, action: any = None) -> JsxElement {
 
 Deliberately not a decorative "AI powered" chip: when the model is not reachable
 this turns red and says so, and the live call count is the evidence that byLLM
-really is doing the reasoning rather than a keyword table.
+really is doing the reasoning. There is no fallback in this app -- when this
+badge is not green, every model-backed action will error until it is fixed.
 """
 def:pub EngineBadge(
     mode: str,
     model: str,
     calls: int,
-    fallbacks: int,
     reason: str,
     roles: list[str]
 ) -> JsxElement {
     online = mode == "llm";
-    tone = "ok" if online else "danger";
-    label = ("byLLM live - " + model) if online else ("DEGRADED - " + mode);
-    return <div className={"pill " + tone} title={", ".join(roles) if roles else "no model calls yet"}>
+    label = ("byLLM live - " + model) if online else "NO MODEL CONNECTION";
+    return <div className={"pill " + ("ok" if online else "danger")} title={", ".join(roles) if roles else "no model calls yet"}>
         <span className="dot"></span>
         <span>{label}</span>
         {if online {
@@ -148,7 +147,7 @@ def:pub EngineBadge(
         }}
         {if not online {
             <span key="f" style={{"opacity": "0.75"}}>
-                {"  " + str(fallbacks) + " heuristic answers" + ("  -  " + reason if reason else "")}
+                {("  -  " + reason) if reason else "  -  set an API key and restart"}
             </span>
         }}
     </div>;
@@ -193,7 +192,7 @@ def:pub StrategyCard(brief: StrategyView) -> JsxElement {
         </div>
         {if len(brief.research_path) == 0 {
             <p className="small muted" key="none">
-                No lookups - this brief came from the deterministic fallback, not the agent.
+                The agent answered without looking anything up this time.
             </p>
         }}
         <div className="feed">

@@ -33,9 +33,7 @@ role that plans. It lives separately because its tools need the graph, and
 
 import from core.graph { Contribution, Need, Org, Requirement, Requires, RoutedThrough }
 import from core.commons { all_orgs }
-import from core.reason {
-    ENGINE, _degrade, _fallback_used, _note, live
-}
+import from core.reason { _note, _note_failure, require_engine }
 
 
 # ---------------------------------------------------------------------------
@@ -204,44 +202,6 @@ sem plan_strategy.household = "How many people the plan has to cover.";
 sem plan_strategy.zip_prefix = "First three digits of their ZIP, or empty if unknown.";
 
 
-# ---------------------------------------------------------------------------
-# Fallback
-# ---------------------------------------------------------------------------
-
-def heuristic_strategy(
-    situation: str,
-    categories: str,
-    assets: str,
-    household: int,
-    zip_prefix: str
-) -> StrategyBrief {
-    _ = (situation, zip_prefix);
-    cats = [c.strip() for c in categories.split(",") if c.strip()];
-    lead = cats[0] if cats else "food";
-    have_id = "photo id" in assets.lower();
-
-    actions: list[str] = [];
-    if not have_id {
-        actions.append("Get a free state photo ID -- most organisations ask for one at the door.");
-    }
-    for cat in cats[:3] {
-        actions.append(f"Visit the nearest {cat} organisation that has no appointment requirement.");
-    }
-    if not actions {
-        actions.append("Visit the nearest no-barrier pantry.");
-    }
-
-    return StrategyBrief(
-        headline=f"Start with {lead}, and clear your paperwork blocker first.",
-        first_action=actions[0],
-        ordered_actions=actions,
-        rely_on_community=False,
-        risk="Walk-in hours may have passed for today; call ahead before travelling.",
-        research_note=f"Deterministic fallback plan for a household of {household} -- the model was not reached."
-    );
-}
-
-
 def plan_strategy_safe(
     situation: str,
     categories: str,
@@ -249,14 +209,12 @@ def plan_strategy_safe(
     household: int,
     zip_prefix: str
 ) -> StrategyBrief {
-    if live() {
-        try {
-            _note("plan_strategy");
-            return plan_strategy(situation, categories, assets, household, zip_prefix);
-        } except Exception as e {
-            _degrade("plan_strategy", str(e));
-        }
+    require_engine("plan_strategy");
+    try {
+        _note("plan_strategy");
+        return plan_strategy(situation, categories, assets, household, zip_prefix);
+    } except Exception as e {
+        _note_failure("plan_strategy", str(e));
+        raise;
     }
-    _fallback_used("plan_strategy");
-    return heuristic_strategy(situation, categories, assets, household, zip_prefix);
 }

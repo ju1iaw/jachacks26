@@ -85,7 +85,7 @@ node CaseStrategy {
     has risk: str = "";
     has research_note: str = "";
     has research_path: list[str] = [];
-    has engine: str = "heuristic";
+    has engine: str = "unknown";
     has at: str = "";
 }
 
@@ -108,7 +108,7 @@ node PlanStep {
     has unblocks: str = "";
     has unblock_category: str = "";
     has reasoning: str = "";
-    has engine: str = "heuristic";
+    has engine: str = "unknown";
     has rank: int = 0;
 }
 
@@ -242,7 +242,7 @@ edge Matched: Need --> Contribution {
     has rationale: str = "";
     has units: int = 1;
     has score: int = 0;
-    has engine: str = "heuristic";
+    has engine: str = "unknown";
     has at: str = "";
 }
 
@@ -336,7 +336,6 @@ obj EngineReport {
     has reason: str = "";
     has calls: int = 0;
     has failures: int = 0;
-    has fallbacks: int = 0;
     has roles: list[str] = [];
 }
 
@@ -348,7 +347,6 @@ obj AccountView {
     has engine_model: str = "";
     has engine_reason: str = "";
     has engine_calls: int = 0;
-    has engine_fallbacks: int = 0;
     has engine_roles: list[str] = [];
 }
 
@@ -364,11 +362,10 @@ obj CommunityView {
     has matched_count: int = 0;
     has fulfilled_count: int = 0;
     has activity: list[WalkerTrace] = [];
-    has engine: str = "heuristic";
+    has engine: str = "unknown";
     has engine_model: str = "";
     has engine_reason: str = "";
     has engine_calls: int = 0;
-    has engine_fallbacks: int = 0;
     has engine_roles: list[str] = [];
 }
 
@@ -384,7 +381,7 @@ obj SeekerBoard {
     has steps: list[PlanStep] = [];
     has needs: list[NeedCard] = [];
     has activity: list[WalkerTrace] = [];
-    has engine: str = "heuristic";
+    has engine: str = "unknown";
     has has_plan: bool = False;
 
     # 0 or 1 element. A list rather than an optional so the client can render it
@@ -401,7 +398,6 @@ obj SeekerBoard {
     has engine_model: str = "";
     has engine_reason: str = "";
     has engine_calls: int = 0;
-    has engine_fallbacks: int = 0;
     has engine_roles: list[str] = [];
 }
 

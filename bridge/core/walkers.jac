@@ -51,7 +51,7 @@ import from core.reason {
     EligibilityVerdict, MatchVerdict,
     ask_clarifying_safe, audit_anonymization_safe, engine,
     escalation_strategy_safe, launch_match, launch_requirement,
-    next_step_nudge_safe, read_situation_safe
+    next_step_nudge_safe, read_situation_safe, require_engine
 }
 import from core.agent { drain_tool_trace, plan_strategy_safe }
 
@@ -139,7 +139,6 @@ def build_board(person: Person) -> SeekerBoard {
         engine_model=rep.model,
         engine_reason=rep.reason,
         engine_calls=rep.calls,
-        engine_fallbacks=rep.fallbacks,
         engine_roles=rep.roles
     );
 }
@@ -179,6 +178,10 @@ walker:protect EligibilityPathWalker {
         if not isinstance(target, Person) {
             disengage;
         }
+        # Fail before touching anything -- a missing key must not wipe the
+        # person's existing plan out from under them.
+        require_engine("judge_requirement");
+
         self.situation = target.situation;
         self.assets = ", ".join(target.assets) if target.assets else "nothing confirmed";
         self.categories = target.categories;
@@ -396,6 +399,7 @@ walker:protect StrategyWalker {
         if not isinstance(person, Person) {
             disengage;
         }
+        require_engine("plan_strategy");
 
         # Re-describing your situation re-plans from scratch, same as the steps.
         for stale in [person ->:HasStrategy:->] {
@@ -517,14 +521,25 @@ walker:protect IntakeWalker {
             log_walker("IntakeWalker", f"one fact would change the plan, asking: \"{clar.question}\"");
         }
 
+        # The eligibility plan and the broadcast are the core promise -- if the
+        # model cannot produce them, the whole submission should fail loudly,
+        # not silently proceed with an empty plan.
         planner = EligibilityPathWalker(person_jid=jid(person));
         root spawn planner;
 
         broadcaster = NeedBroadcastWalker(person_jid=jid(person));
         root spawn broadcaster;
 
-        strategist = StrategyWalker(person_jid=jid(person), emit=False);
-        root spawn strategist;
+        # The caseworker agent's brief is additive -- the UI already renders it
+        # as an optional 0-or-1-item card. A failure here (e.g. the ReAct loop
+        # errors mid-tool-call) should not cost the person the eligibility plan
+        # they already have; it is logged honestly instead of shown at all.
+        try {
+            strategist = StrategyWalker(person_jid=jid(person), emit=False);
+            root spawn strategist;
+        } except Exception as e {
+            log_walker("engine", f"caseworker agent failed, no brief this time: {str(e)}");
+        }
 
         flush_engine_log();
         report build_board(person);
@@ -552,6 +567,7 @@ walker:protect MatchWalker {
     has reports: list[NeedCard] = [];
 
     can begin with Root entry {
+        require_engine("judge_match");
         visit [root.shared --> [?:Need]];
     }
 
@@ -675,6 +691,34 @@ walker:protect FulfillmentWalker {
         }
         person = owners[0];
 
+        noun = CATEGORY_NOUN.get(here.category, here.category);
+
+        # Work out what the next open step WOULD be once this fulfillment lands,
+        # without mutating anything yet -- mirrors the covering/optional rules
+        # below exactly, so the nudge can be generated before anything commits.
+        next_open = "";
+        for step in sorted([person ->:HasStep:->], key=_rank) {
+            would_be_covered = step.category == here.category and step.status in ["open", "blocked"];
+            would_be_optional = step.unblocks and step.unblock_category == here.category and step.status == "open";
+            if step.status == "open" and not would_be_covered and not would_be_optional and not next_open {
+                next_open = step.title;
+            }
+        }
+
+        # The nudge is the only part of settling a match that needs the model.
+        # If it is not available right now, mutate NOTHING -- the Need stays
+        # "matched" and this same check retries on the person's next poll, with
+        # no fabricated text standing in for the real one.
+        try {
+            nudge = next_step_nudge_safe(noun, next_open);
+        } except Exception as e {
+            log_walker(
+                "engine",
+                f"{here.code} matched but the model is unavailable for the update text ({str(e)}) -- will retry"
+            );
+            skip;
+        }
+
         covered = 0;
         for step in [person ->:HasStep:->] {
             if step.category == here.category and step.status in ["open", "blocked"] {
@@ -688,16 +732,8 @@ walker:protect FulfillmentWalker {
         }
 
         here.status = "fulfilled";
-        noun = CATEGORY_NOUN.get(here.category, here.category);
         self.resolved.append(noun);
-
-        next_open = "";
-        for step in sorted([person ->:HasStep:->], key=_rank) {
-            if step.status == "open" and not next_open {
-                next_open = step.title;
-            }
-        }
-        person.last_nudge = next_step_nudge_safe(noun, next_open);
+        person.last_nudge = nudge;
 
         log_walker(
             "FulfillmentWalker",
@@ -724,7 +760,6 @@ walker:protect FulfillmentWalker {
                 engine_model=rep.model,
                 engine_reason=rep.reason,
                 engine_calls=rep.calls,
-                engine_fallbacks=rep.fallbacks,
                 engine_roles=rep.roles
             );
         }
@@ -759,6 +794,7 @@ walker:protect FollowUpWalker {
     has reports: list[NeedCard] = [];
 
     can begin with Root entry {
+        require_engine("escalation_strategy");
         visit [root.shared --> [?:Need]];
     }
 
@@ -879,7 +915,6 @@ walker:protect CommunityBoard {
             engine_model=rep.model,
             engine_reason=rep.reason,
             engine_calls=rep.calls,
-            engine_fallbacks=rep.fallbacks,
             engine_roles=rep.roles
         );
     }

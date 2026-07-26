@@ -51,7 +51,6 @@ def engine_report -> EngineReport {
         reason=st.reason,
         calls=st.calls,
         failures=st.failures,
-        fallbacks=st.fallbacks,
         roles=role_tally()
     );
 }
@@ -60,9 +59,9 @@ def engine_report -> EngineReport {
 """Drain reason.jac's pending degradation lines into the shared Activity feed.
 
 `reason.jac` cannot import this module (this module imports it), so it buffers
-degradation events in a list and callers move them onto the graph. Any walker
-that touches the model should call this on the way out, so a silent fallback
-becomes a visible line in the UI.
+degradation events (missing key, a failed call) in a list and callers move them
+onto the graph. Any walker that touches the model should call this on the way
+out, so a failure is always a visible line in the UI, never a silent one.
 """
 def flush_engine_log {
     for line in drain_degrade_log() {
@@ -82,7 +81,6 @@ def:protect me -> AccountView {
         engine_model=rep.model,
         engine_reason=rep.reason,
         engine_calls=rep.calls,
-        engine_fallbacks=rep.fallbacks,
         engine_roles=rep.roles
     );
 }
@@ -110,7 +108,6 @@ def:protect choose_role(role: str, display_name: str) -> AccountView {
         engine_model=rep.model,
         engine_reason=rep.reason,
         engine_calls=rep.calls,
-        engine_fallbacks=rep.fallbacks,
         engine_roles=rep.roles
     );
 }

@@ -1,5 +1,13 @@
 """Handlers for HelperView."""
 
+def clean_error(prefix: str, raw: str) -> str {
+    if "ENGINE_UNAVAILABLE" in raw {
+        return "Bridge has no working model connection right now. Add an API key on the server and try again.";
+    }
+    return prefix + " Try again in a moment.";
+}
+
+
 impl HelperView.refresh -> None {
     try {
         result = await root spawn CommunityBoard();
@@ -16,7 +24,6 @@ impl HelperView.refresh -> None {
             engine_model = view.engine_model;
             engine_reason = view.engine_reason;
             engine_calls = view.engine_calls;
-            engine_fallbacks = view.engine_fallbacks;
             engine_roles = view.engine_roles;
             if not org_id and len(view.orgs) > 0 {
                 org_id = view.orgs[0].org_id;
@@ -52,7 +59,7 @@ impl HelperView.add_pledge -> None {
         description = "";
         notes = "";
     } except Exception as e {
-        flash = "Could not add that: " + str(e);
+        flash = clean_error("Could not add that.", str(e));
     }
     busy = "";
     await refresh();
@@ -70,7 +77,7 @@ impl HelperView.run_match -> None {
             else "Walked every open need - nothing on the shelf fits any of them."
         );
     } except Exception as e {
-        flash = "Matcher failed: " + str(e);
+        flash = clean_error("Matcher failed.", str(e));
     }
     busy = "";
     await refresh();
@@ -88,7 +95,7 @@ impl HelperView.run_followup -> None {
             else "Nothing has been sitting unfilled long enough to escalate."
         );
     } except Exception as e {
-        flash = "Follow-up failed: " + str(e);
+        flash = clean_error("Follow-up failed.", str(e));
     }
     busy = "";
     await refresh();

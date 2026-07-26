@@ -2,23 +2,22 @@
 
     jac test core/reason.test.jac
 
-Three groups:
+There is no fallback path in this app -- every judgement comes from `by llm()`
+or the call raises. These tests cover:
 
   * **`by llm()` path** -- swap the module's `llm` glob for a `MockLLM` and run
-    the real `by llm()`-bodied functions. These prove the structured-output
+    the real `by llm()`-bodied functions, proving the structured-output
     contract (schema injection, typed parse, unit clamping) without a network
-    call. If a `sem` or a return `obj` drifts, these fail.
-  * **Engine honesty** -- the state machine that decides whether the model or the
-    fallback is answering, and that a fallback is never silent.
-  * **Fallback behaviour** -- the deterministic path, including the tie-break bug
-    that used to greet a food emergency with "let's get you a safe place to stay".
-
-The parallel-launch tests are the subtle ones: `flow` inside a comprehension
-captures the loop variable by reference, so a future built inline reads whatever
-the last iteration left behind. That produced a real bug -- every eligibility
-gate on an org got the LAST gate's verdict, which silently turned blocked orgs
-into "you qualify". The `launch_*` wrappers exist to prevent it, and these tests
-are what stop someone inlining them again.
+    call.
+  * **Engine honesty** -- with no key, `require_engine` raises immediately,
+    before any of the eight roles even attempt a call. A transient per-call
+    failure records itself for display but does NOT permanently downgrade the
+    engine -- a rate-limit blip should not brick the app until restart.
+  * **Parallel launches** -- `flow` inside a comprehension captures the loop
+    variable by reference, so a future built inline reads whatever the last
+    iteration left behind. That produced a real bug: every eligibility gate on
+    an org got the LAST gate's verdict, silently turning blocked orgs into "you
+    qualify". The `launch_*` wrappers exist to prevent it.
 """
 
 
@@ -48,7 +47,6 @@ def _reset_engine {
     ENGINE.mode = "unknown";
     ENGINE.calls = 0;
     ENGINE.failures = 0;
-    ENGINE.fallbacks = 0;
     DEGRADE_LOG.clear();
     ROLE_CALLS.clear();
 }
@@ -77,9 +75,9 @@ test "read_situation runs through by llm() and returns a typed SituationRead" {
     assert read.urgency == "critical";
     assert read.household == 3;
     assert read.categories == ["food"];
-    # The LLM path really ran: the call was counted and nothing fell back.
+    # The LLM path really ran: the call was counted, no exception raised.
     assert ROLE_CALLS.get("read_situation", 0) == 1;
-    assert ENGINE.fallbacks == 0;
+    assert ENGINE.failures == 0;
     _reset_engine();
 }
 
@@ -151,7 +149,7 @@ test "escalation_strategy can open a second front in another category" {
 
 
 # ===========================================================================
-# Engine honesty
+# Engine honesty -- no fallback, ever
 # ===========================================================================
 
 test "with no key the engine reports unconfigured and says so out loud" {
@@ -163,25 +161,60 @@ test "with no key the engine reports unconfigured and says so out loud" {
         mode = ensure_engine();
         assert mode == "unconfigured";
         assert "no model API key" in ENGINE.reason;
-        # The degradation was announced, not swallowed.
         assert len(DEGRADE_LOG) >= 1;
     }
     _reset_engine();
 }
 
 
-test "a fallback is always recorded, never silent" {
+test "require_engine raises immediately when the engine is not live, before any call" {
     _reset_engine();
     ENGINE.checked = True;
     ENGINE.mode = "unconfigured";
     ENGINE.reason = "no key";
 
-    read = read_situation_safe("I need food, two kids, no car, no stove, 94110");
-
-    assert read.categories[0] == "food";
-    assert ENGINE.fallbacks == 1;
-    assert any(["deterministic fallback" in line for line in DEGRADE_LOG]);
+    threw = False;
+    try {
+        read_situation_safe("I need food, two kids, no car, no stove, 94110");
+    } except Exception as e {
+        threw = True;
+        assert ENGINE_UNAVAILABLE_TAG in str(e);
+    }
+    assert threw;
+    # No fallback ran, and no call was ever attempted or counted.
     assert ROLE_CALLS.get("read_situation", 0) == 0;
+    _reset_engine();
+}
+
+
+test "a call failure is recorded distinctly from an unconfigured engine" {
+    _reset_engine();
+    _note_failure("read_situation", "RateLimitError: 429 too many requests");
+
+    # A transient call failure is a real provider error, not the "no key
+    # configured" case -- the tag must NOT appear, so client code can tell them
+    # apart without parsing prose.
+    assert ENGINE_UNAVAILABLE_TAG not in ENGINE.reason;
+    assert ENGINE.failures == 1;
+    assert any(["429" in line for line in DEGRADE_LOG]);
+    _reset_engine();
+}
+
+
+test "one failed call does not permanently downgrade the engine" {
+    _reset_engine();
+    ENGINE.checked = True;
+    ENGINE.mode = "llm";
+    ENGINE.reason = "";
+
+    # Simulate a transient failure being recorded, the way _note_failure does.
+    _note_failure("judge_requirement", "RateLimitError: 429 too many requests");
+
+    # The engine must still be reported as live -- a single bad call is not the
+    # same fact as "there is no working model connection".
+    assert live();
+    assert engine() == "llm";
+    assert ENGINE.failures == 1;
     _reset_engine();
 }
 
@@ -196,85 +229,18 @@ test "drain_degrade_log hands over the lines and empties itself" {
 }
 
 
-test "intake extracts household, constraints and an anonymized summary" {
-    read = heuristic_read(
-        "I need food for me and my two kids this week. I lost my ID, "
-        "I don't have a car, and where we're staying has no stove. Zip is 94110."
-    );
-    assert read.household == 3;
-    assert "food" in read.categories;
-    assert read.zip_prefix == "941";
-    assert "no way to cook" in read.anonymized_summary;
-    assert "no photo ID" in read.anonymized_summary;
-}
-
-
-test "the anonymized summary carries nothing identifying" {
-    read = heuristic_read(
-        "My name is Maria Alvarez, I live at 1420 Shotwell St and my number "
-        "is 415-555-0199. I need food for my two kids. Zip 94110."
-    );
-    low = read.anonymized_summary.lower();
-    for leak in ["maria", "alvarez", "shotwell", "555", "94110"] {
-        assert leak not in low;
-    }
-}
-
-
-test "an unmet document gate blocks and carries a workaround" {
-    verdict = heuristic_requirement(
-        "I lost my ID when we left the apartment.",
-        "nothing confirmed",
-        "Government-issued photo ID",
-        "document",
-        "Get a free California ID at the DMV on Fell St."
-    );
-    assert not verdict.satisfied;
-    assert "DMV" in verdict.unblock_action;
-}
-
-
-test "a gate the person already clears does not block" {
-    verdict = heuristic_requirement(
-        "I have my state photo ID with me.",
-        "state photo ID",
-        "Government-issued photo ID",
-        "document",
-        ""
-    );
-    assert verdict.satisfied;
-    assert verdict.unblock_action == "";
-}
-
-
-test "matching reasons about usability, not just category" {
-    unusable = heuristic_match(
-        "Needs groceries. Household of 3; no way to cook.",
-        "food", 3, "food", "40lb of dry rice, beans and pasta", "Pickup only.", 8
-    );
-    assert not unusable.fits;
-
-    usable = heuristic_match(
-        "Needs groceries. Household of 3; no way to cook.",
-        "food", 3, "food", "12 ready-to-eat family meal boxes", "Can be delivered.", 12
-    );
-    assert usable.fits;
-    assert usable.score > unusable.score;
-    assert usable.units <= 12;
-}
-
-
-test "a depleted pledge is never offered again" {
-    verdict = heuristic_match(
-        "Needs groceries. Household of 2.",
-        "food", 2, "food", "meal boxes", "", 0
-    );
-    assert not verdict.fits;
-    assert verdict.units == 0;
-}
-
+# ===========================================================================
+# Parallel launches stay aligned with their inputs
+# ===========================================================================
 
 test "parallel gate judgements stay aligned with their gates" {
+    _reset_engine();
+    _use_mock([
+        EligibilityVerdict(satisfied=False, reasoning="no ID on file", unblock_action="Visit the DMV."),
+        EligibilityVerdict(satisfied=True, reasoning="self-attested income", unblock_action=""),
+        EligibilityVerdict(satisfied=False, reasoning="walk-ins turned away", unblock_action="Call at 8am.")
+    ]);
+
     gates = [
         ["Government-issued photo ID", "document", "Visit the DMV."],
         ["Household income under 125% FPL", "income", ""],
@@ -287,17 +253,23 @@ test "parallel gate judgements stay aligned with their gates" {
     verdicts: list[EligibilityVerdict] = [wait f for f in pending];
 
     assert len(verdicts) == 3;
-    # document gate -> unmet, income -> self-attested, appointment -> must book.
     # If `flow` late-bound the loop variable these would all be identical.
     assert not verdicts[0].satisfied;
     assert verdicts[1].satisfied;
     assert not verdicts[2].satisfied;
     assert "DMV" in verdicts[0].unblock_action;
     assert "8am" in verdicts[2].unblock_action;
+    _reset_engine();
 }
 
 
 test "parallel match judgements stay aligned with their pledges" {
+    _reset_engine();
+    _use_mock([
+        MatchVerdict(fits=False, score=15, units=0, rationale="needs cooking, no stove"),
+        MatchVerdict(fits=True, score=92, units=3, rationale="ready to eat, no stove needed")
+    ]);
+
     pledges = [
         ["40lb of dry rice, beans and pasta", "Pickup only."],
         ["12 ready-to-eat family meal boxes", "Can be delivered."]
@@ -314,4 +286,5 @@ test "parallel match judgements stay aligned with their pledges" {
     assert len(verdicts) == 2;
     assert not verdicts[0].fits;   # needs cooking
     assert verdicts[1].fits;       # ready to eat
+    _reset_engine();
 }

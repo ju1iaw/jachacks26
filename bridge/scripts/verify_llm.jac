@@ -4,13 +4,10 @@
     jac run scripts/verify_llm.jac
 
 Exercises every `by llm()` role in Bridge exactly once against the real model,
-then prints the per-role call tally. If any role answered from a deterministic
-fallback, this exits with a non-zero status and names the role, so "the API key
-works" is a checked fact rather than an assumption.
-
-Run it with `BRIDGE_STRICT_LLM=1` to make the fallbacks raise at the point of use
-instead of substituting -- that is the mode in which no answer can possibly be
-heuristic.
+then prints the per-role call tally. There is no fallback path in this app: if
+the engine is not configured, or any role's call fails, this script raises and
+stops right there with the real provider error -- "the API key works" is a
+checked fact, not an assumption.
 """
 
 import sys;
@@ -18,7 +15,7 @@ import from core.commons { engine_report, ensure_commons, role_tally }
 import from core.reason {
     ask_clarifying_safe, audit_anonymization_safe, escalation_strategy_safe,
     judge_match_safe, judge_requirement_safe, next_step_nudge_safe,
-    read_situation_safe, strict_mode
+    read_situation_safe
 }
 import from core.agent { drain_tool_trace, plan_strategy_safe }
 
@@ -49,7 +46,6 @@ with entry:__main__ {
     rep = engine_report();
     print(f"engine mode : {rep.mode}");
     print(f"model       : {rep.model}");
-    print(f"strict mode : {strict_mode()}");
     if rep.reason {
         print(f"reason      : {rep.reason}");
     }
@@ -156,7 +152,6 @@ with entry:__main__ {
     final = engine_report();
     print(f"total model calls : {final.calls}");
     print(f"failures          : {final.failures}");
-    print(f"fallback answers  : {final.fallbacks}");
     print("per-role tally:");
     for line in role_tally() {
         print(f"   {line}");
@@ -172,10 +167,6 @@ with entry:__main__ {
     missing = [role for role in EXPECTED_ROLES if tally.get(role, 0) < 1];
 
     print("");
-    if final.fallbacks > 0 {
-        print(f"FAIL: {final.fallbacks} answer(s) came from a deterministic fallback, not the model.");
-        sys.exit(1);
-    }
     if missing {
         print(f"FAIL: these roles never reached the model: {', '.join(missing)}");
         sys.exit(1);
@@ -185,5 +176,5 @@ with entry:__main__ {
         sys.exit(1);
     }
     print(f"PASS: all {len(EXPECTED_ROLES)} byLLM roles answered from {final.model}, "
-          f"{final.calls} calls, zero fallbacks, agent made {len(path)} graph lookups.");
+          f"{final.calls} calls, agent made {len(path)} graph lookups.");
 }

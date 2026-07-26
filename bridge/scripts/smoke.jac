@@ -20,6 +20,7 @@ through the API as two separate logged-in users, repeatedly, against a graph tha
 persists between calls, and stays clean -- that is the path the demo runs on.
 """
 
+import sys;
 import from core.commons { choose_role, ensure_commons, engine_report }
 import from core.walkers {
     CommunityBoard, EligibilityPathWalker, FollowUpWalker, FulfillmentWalker,
@@ -45,8 +46,10 @@ with entry:__main__ {
         print(f"reason    : {rep.reason}");
     }
     if rep.mode != "llm" {
-        print("!! byLLM is NOT answering -- every judgement below is a deterministic fallback.");
-        print("!! export OPENAI_API_KEY to switch the real reasoning on.");
+        print("");
+        print("!! No working model connection -- there is no fallback, so nothing below will run.");
+        print("!! export OPENAI_API_KEY (or ANTHROPIC_API_KEY / GOOGLE_API_KEY) and retry.");
+        sys.exit(1);
     }
 
     line("IntakeWalker");
@@ -97,7 +100,7 @@ with entry:__main__ {
                 print(f"  - {call}");
             }
         } else {
-            print("  (none -- the fallback planner does no research)");
+            print("  (none -- the agent answered without consulting the graph this time)");
         }
     }
 

@@ -46,7 +46,6 @@ def:pub SeekerView(display_name: str) -> JsxElement {
     has engine_model: str = "";
     has engine_reason: str = "";
     has engine_calls: int = 0;
-    has engine_fallbacks: int = 0;
     has engine_roles: list[str] = [];
 
     def apply(board: SeekerBoard) -> None;
@@ -95,7 +94,6 @@ def:pub SeekerView(display_name: str) -> JsxElement {
                         mode={engine}
                         model={engine_model}
                         calls={engine_calls}
-                        fallbacks={engine_fallbacks}
                         reason={engine_reason}
                         roles={engine_roles}
                     />
@@ -129,7 +127,6 @@ def:pub SeekerView(display_name: str) -> JsxElement {
                             mode={engine}
                             model={engine_model}
                             calls={engine_calls}
-                            fallbacks={engine_fallbacks}
                             reason={engine_reason}
                             roles={engine_roles}
                         />
