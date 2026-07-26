@@ -6,13 +6,22 @@ impl Gate.do_login -> None {
     busy = True;
     error = "";
     try {
-        ok = await jacLogin(email, password);
+        # Jac supports email and username identities. Phone accounts use their
+        # normalized phone number as the username identity.
+        identity_type = "email" if login_method == "email" else "username";
+        phone_login = "".join([char for char in email if char.isdigit()]);
+        identity_value = email.strip().lower() if login_method == "email" else phone_login;
+        ok = await jacLogin({"type": identity_type, "value": identity_value}, password);
     } except Exception {
         ok = False;
     }
     busy = False;
     if not ok {
-        error = "That email and password didn't match an account.";
+        error = (
+            "That phone number and password didn't match an account."
+            if login_method == "phone"
+            else "That email and password didn't match an account."
+        );
         return;
     }
     try {
@@ -107,7 +116,27 @@ impl Gate.next_name(e: MouseEvent) -> None {
     }
 }
 
-impl Gate.next_contact(e: MouseEvent) -> None {
+impl Gate.next_contact -> None {
+    if contact_value.strip() {
+        busy = True;
+        exists: bool = False;
+        try {
+            exists = await contact_registered(contact_method, contact_value);
+        } except Exception {
+            busy = False;
+            error = "We couldn’t check that contact right now. Please try again.";
+            return;
+        }
+        busy = False;
+        if exists {
+            login_method = contact_method;
+            email = contact_value;
+            mode = "login";
+            stage = "creds";
+            error = "You already have an account. Sign in below.";
+            return;
+        }
+    }
     stage = "location";
     error = "";
 }
@@ -133,8 +162,36 @@ impl Gate.request_location(e: MouseEvent) -> None {
     );
 }
 
+impl Gate.load_address_suggestions -> None {
+    if len(location.strip()) < 4 or address_valid {
+        return;
+    }
+    searching_address = True;
+    address_error = "";
+    try {
+        address_suggestions = await suggest_addresses(location);
+        if len(address_suggestions) == 0 {
+            address_error = "No matching places found. Try adding a city, state, or ZIP.";
+        }
+    } except Exception {
+        address_suggestions = [];
+        address_error = "Place search is unavailable right now. Try again in a moment.";
+    }
+    searching_address = False;
+}
+
+impl Gate.select_address(suggestion: dict[str, str]) -> None {
+    location = suggestion["label"];
+    map_url = suggestion["map_url"];
+    address_valid = True;
+    address_error = "";
+    address_suggestions = [];
+}
+
 impl Gate.use_manual_location(e: MouseEvent) -> None {
-    finish_signup();
+    if address_valid {
+        finish_signup();
+    }
 }
 
 impl Gate.skip_location(e: MouseEvent) -> None {

@@ -244,6 +244,36 @@ label.lbl { display: block; font-size: 12.5px; color: var(--muted); margin-botto
 .location-opt:hover { border-color: var(--cool); }
 .location-opt span span { display: block; font-weight: 450; }
 .location-icon { font-size: 26px; color: var(--cool-dim); }
+.address-error { margin-top: 10px; color: var(--danger); font-size: 12.5px; }
+.suggestion-status { padding: 9px 3px 0; color: var(--muted); font-size: 12px; }
+.address-suggestions {
+  overflow: hidden; margin-top: 6px; border: 1px solid var(--line);
+  border-radius: 10px; background: var(--panel); box-shadow: 0 12px 28px rgba(36,75,85,.14);
+}
+.address-suggestion {
+  display: flex; gap: 10px; align-items: flex-start; width: 100%; padding: 11px 12px;
+  border: 0; border-bottom: 1px solid var(--line); background: var(--panel);
+  color: var(--text); text-align: left; font-size: 13px;
+}
+.address-suggestion:last-child { border-bottom: 0; }
+.address-suggestion:hover { background: var(--panel-2); }
+.suggestion-pin { color: var(--cool-dim); font-size: 10px; padding-top: 4px; }
+.map-card {
+  position: relative; overflow: hidden; margin-top: 14px;
+  border: 1px solid var(--line); border-radius: 12px; background: var(--panel-2);
+}
+.address-map { display: block; width: 100%; height: 210px; border: 0; }
+.map-confirmed {
+  display: flex; gap: 9px; align-items: flex-start; padding: 11px 13px;
+  border-top: 1px solid var(--line); background: var(--panel);
+}
+.map-confirmed span:last-child { display: flex; flex-direction: column; }
+.map-confirmed small { color: var(--muted); font-size: 11.5px; margin-top: 2px; }
+.map-pin { color: var(--cool-dim); line-height: 1.35; }
+.map-attribution {
+  display: block; padding: 0 13px 10px; color: var(--muted);
+  background: var(--panel); font-size: 10px; text-align: right;
+}
 .or { display: flex; align-items: center; gap: 10px; margin: 18px 0 0; color: var(--muted); font-size: 12px; }
 .or::before, .or::after { content: ""; flex: 1; border-top: 1px solid var(--line); }
 .text-btn {

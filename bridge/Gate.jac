@@ -6,15 +6,17 @@ graph, not anyone else's.
 """
 
 import from "@jac/runtime" { jacLogin, jacLogout, jacSignup }
+import from react { useEffect }
 import from .components.Bits { Brand }
 
-sv import from .core.commons { choose_role, me }
+sv import from .core.commons { choose_role, contact_registered, me, suggest_addresses }
 sv import from .core.graph { AccountView }
 
 
 def:pub Gate(onReady: Callable[[], None]) -> JsxElement {
     has mode: str = "directory";
     has selected_role: str = "";
+    has login_method: str = "email";
     has email: str = "";
     has password: str = "";
     has display_name: str = "";
@@ -23,6 +25,11 @@ def:pub Gate(onReady: Callable[[], None]) -> JsxElement {
     has contact_value: str = "";
     has location: str = "";
     has locating: bool = False;
+    has address_valid: bool = False;
+    has address_error: str = "";
+    has map_url: str = "";
+    has address_suggestions: list[dict[str, str]] = [];
+    has searching_address: bool = False;
     has busy: bool = False;
     has error: str = "";
 
@@ -33,13 +40,24 @@ def:pub Gate(onReady: Callable[[], None]) -> JsxElement {
     def choose_helper(e: MouseEvent) -> None;
     def back_to_directory(e: MouseEvent) -> None;
     def next_name(e: MouseEvent) -> None;
-    def next_contact(e: MouseEvent) -> None;
+    async def next_contact -> None;
     def skip_contact(e: MouseEvent) -> None;
     def request_location(e: MouseEvent) -> None;
+    async def load_address_suggestions -> None;
+    def select_address(suggestion: dict[str, str]) -> None;
     def use_manual_location(e: MouseEvent) -> None;
     def skip_location(e: MouseEvent) -> None;
     def back_to_login(e: MouseEvent) -> None;
     def to_signup(e: MouseEvent) -> None;
+
+    useEffect(lambda {
+        if stage != "location" or address_valid or len(location.strip()) < 4 {
+            address_suggestions = [];
+            return;
+        }
+        timer = setTimeout(lambda { load_address_suggestions(); }, 450);
+        return lambda { clearTimeout(timer); };
+    }, [location, stage, address_valid]);
 
     if mode == "directory" {
         return <div className="directory-page">
@@ -74,15 +92,17 @@ def:pub Gate(onReady: Callable[[], None]) -> JsxElement {
 
     return <div className="gate">
         <div style={{"marginBottom": "18px", "justifyContent": "center", "display": "flex"}}>
-            <Brand tagline={"volunteer access" if selected_role == "helper" else ""}/>
+            <Brand tagline={"bridge for volunteers" if selected_role == "helper" else ""}/>
         </div>
 
         <div className="card">
             {if mode == "signup" {
                 <div className="signup-flow" key="signup">
-                    <button className="back-link" onClick={back_to_login} disabled={busy}>
-                        ← back to sign in
-                    </button>
+                    {if stage != "name" {
+                        <button className="back-link" onClick={back_to_login} disabled={busy}>
+                            ← back to sign in
+                        </button>
+                    }}
 
                     <div className="progress" aria-label="Signup progress">
                         <span className={"active" if stage == "name" else "done"}></span>
@@ -97,12 +117,15 @@ def:pub Gate(onReady: Callable[[], None]) -> JsxElement {
                             <input
                                 className="field hero-field"
                                 value={display_name}
-                                placeholder="First name is plenty"
+                                placeholder="Enter your name"
                                 autofocus={True}
                                 onChange={lambda (e: ChangeEvent) { display_name = e.target.value; }}
                             />
                             <button className="btn primary full" onClick={next_name} disabled={not display_name.strip()}>
                                 Continue
+                            </button>
+                            <button className="text-btn account-exists" onClick={back_to_login}>
+                                I already have an account
                             </button>
                         </div>
                     }}
@@ -132,8 +155,8 @@ def:pub Gate(onReady: Callable[[], None]) -> JsxElement {
                                 placeholder={"you@example.com" if contact_method == "email" else "(555) 123-4567"}
                                 onChange={lambda (e: ChangeEvent) { contact_value = e.target.value; }}
                             />
-                            <button className="btn primary full" onClick={next_contact}>
-                                {"Continue" if contact_value.strip() else "Skip for now"}
+                            <button className="btn primary full" onClick={next_contact} disabled={busy}>
+                                {"Checking…" if busy else ("Continue" if contact_value.strip() else "Skip for now")}
                             </button>
                         </div>
                     }}
@@ -154,12 +177,74 @@ def:pub Gate(onReady: Callable[[], None]) -> JsxElement {
                             <input
                                 className="field hero-field"
                                 value={location}
-                                placeholder="City, neighborhood, or ZIP"
-                                onChange={lambda (e: ChangeEvent) { location = e.target.value; }}
+                                placeholder="Search for an address or place"
+                                autocomplete="off"
+                                onChange={lambda (e: ChangeEvent) {
+                                    location = e.target.value;
+                                    address_valid = False;
+                                    address_error = "";
+                                    map_url = "";
+                                }}
                             />
-                            <button className="btn primary full" onClick={use_manual_location} disabled={busy}>
-                                {("Working…" if busy else "Continue") if location.strip() else ("Working…" if busy else "Skip for now")}
-                            </button>
+
+                            {if searching_address {
+                                <div className="suggestion-status" key="searching">Searching places…</div>
+                            }}
+
+                            {if len(address_suggestions) > 0 and not address_valid {
+                                <div className="address-suggestions" key="suggestions" role="listbox">
+                                    {for (i, suggestion) in enumerate(address_suggestions) {
+                                        <button
+                                            className="address-suggestion"
+                                            key={str(i)}
+                                            role="option"
+                                            onClick={lambda { select_address(suggestion); }}
+                                        >
+                                            <span className="suggestion-pin">●</span>
+                                            <span>{suggestion["label"]}</span>
+                                        </button>
+                                    }}
+                                </div>
+                            }}
+
+                            {if address_error {
+                                <p className="address-error" key="address-error">{address_error}</p>
+                            }}
+
+                            {if address_valid {
+                                <div className="map-card" key="map">
+                                    <iframe
+                                        className="address-map"
+                                        src={map_url}
+                                        title="Verified address map"
+                                        loading="lazy"
+                                    ></iframe>
+                                    <div className="map-confirmed">
+                                        <span className="map-pin">●</span>
+                                        <span><b>Location selected</b><small>{location}</small></span>
+                                    </div>
+                                    <a
+                                        className="map-attribution"
+                                        href="https://www.openstreetmap.org/copyright"
+                                        target="_blank"
+                                    >© OpenStreetMap contributors</a>
+                                </div>
+                            }}
+
+                            {if address_valid {
+                                <button className="btn primary full" key="continue" onClick={use_manual_location} disabled={busy}>
+                                    Continue
+                                </button>
+                            } else {
+                                <button
+                                    className="btn ghost full"
+                                    key="skip"
+                                    onClick={skip_location}
+                                    disabled={busy}
+                                >
+                                    {"Skip for now" if not location.strip() else "Skip address for now"}
+                                </button>
+                            }}
                         </div>
                     }}
 
@@ -178,11 +263,29 @@ def:pub Gate(onReady: Callable[[], None]) -> JsxElement {
                     <h1>
                         {"Sign in to help" if selected_role == "helper" else "Sign in to get support"}
                     </h1>
-                    <label className="lbl" style={{"marginTop": "12px"}}>Email</label>
+                    <div className="contact-tabs login-tabs" role="tablist" aria-label="Sign-in method">
+                        <button
+                            role="tab"
+                            aria-selected={login_method == "email"}
+                            className={"contact-tab active" if login_method == "email" else "contact-tab"}
+                            onClick={lambda { login_method = "email"; email = ""; error = ""; }}
+                        >Email</button>
+                        <button
+                            role="tab"
+                            aria-selected={login_method == "phone"}
+                            className={"contact-tab active" if login_method == "phone" else "contact-tab"}
+                            onClick={lambda { login_method = "phone"; email = ""; error = ""; }}
+                        >Phone</button>
+                    </div>
+                    <label className="lbl" style={{"marginTop": "12px"}}>
+                        {"Email" if login_method == "email" else "Phone number"}
+                    </label>
                     <input
                         className="field"
+                        type={"email" if login_method == "email" else "tel"}
                         value={email}
-                        placeholder="you@example.com"
+                        autocomplete={"email" if login_method == "email" else "tel"}
+                        placeholder={"you@example.com" if login_method == "email" else "(555) 123-4567"}
                         onChange={lambda (e: ChangeEvent) { email = e.target.value; }}
                     />
 

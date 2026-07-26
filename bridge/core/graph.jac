@@ -39,6 +39,15 @@ node Account {
     has location: str = "";
 }
 
+node ContactClaim {
+    """A one-way digest used only to detect duplicate signup contacts.
+
+    The raw email or phone remains on its owner's private Account node.
+    """
+
+    has digest: str;
+}
+
 
 node Person {
     """One human in an acute situation. The only node holding anything personal.
