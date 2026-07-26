@@ -418,6 +418,39 @@ sem next_step_nudge.next_open_step = "The title of the next still-open step in t
 
 
 # ===========================================================================
+# Role 9 - helper offer intake
+# ===========================================================================
+
+obj HelperOfferItem {
+    has name: str;
+    has kind: str;
+    has description: str;
+    has details: list[str];
+    has notes: str = "";
+}
+
+sem HelperOfferItem = "One concrete service or good a volunteer can offer.";
+sem HelperOfferItem.name = "Short title for the offer, e.g. 'Meal cooking and delivery'. Under 6 words.";
+sem HelperOfferItem.kind = "Exactly one of: 'food', 'goods', 'funds', 'time'.";
+sem HelperOfferItem.description = "One plain sentence of what they are offering.";
+sem HelperOfferItem.details = "2-4 short bullet lines of specifics from what they said (radius, schedule, quantity, constraints).";
+sem HelperOfferItem.notes = "Constraints only (distance, days, dietary limits). Empty if none.";
+
+obj HelperOfferRead {
+    has offers: list[HelperOfferItem];
+    has reply: str;
+}
+
+sem HelperOfferRead = "Structured offers extracted from a volunteer's description of how they can help.";
+sem HelperOfferRead.offers = "Every distinct help they offered. Empty if they did not offer anything concrete.";
+sem HelperOfferRead.reply = "One warm sentence acknowledging what they offered, under 20 words. No emoji.";
+
+def read_helper_offers(text: str) -> HelperOfferRead by llm(temperature=0.2);
+sem read_helper_offers = "Read what a volunteer says they can do and extract concrete offered services or goods. Split combined offers into separate items when they are different kinds of help.";
+sem read_helper_offers.text = "What the volunteer typed, verbatim.";
+
+
+# ===========================================================================
 # Safe wrappers -- the ONLY entry points walkers should call
 # ===========================================================================
 #
@@ -523,6 +556,18 @@ def next_step_nudge_safe(resolved: str, next_open_step: str) -> str {
         return next_step_nudge(resolved, next_open_step);
     } except Exception as e {
         _note_failure("next_step_nudge", str(e));
+        raise;
+    }
+}
+
+
+def read_helper_offers_safe(text: str) -> HelperOfferRead {
+    require_engine("read_helper_offers");
+    try {
+        _note("read_helper_offers");
+        return read_helper_offers(text);
+    } except Exception as e {
+        _note_failure("read_helper_offers", str(e));
         raise;
     }
 }

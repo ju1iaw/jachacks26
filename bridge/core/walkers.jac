@@ -64,6 +64,7 @@ purely by reading and writing the same graph:
 import from core.graph {
     Activity, AnsweredQuestion, CaseStrategy, Contribution, Donor, Need, NeedCard,
     Org, Person, PlanStep, Requirement, SeekerBoard, CommunityView, StrategyView,
+    OfferView,
     BroadcastTo, HasAnswer, HasNeed, HasStep, HasStrategy, Matched, Pledges,
     Requires, RoutedThrough,
     age_hours, age_label, need_code, now_iso, rewind
@@ -73,9 +74,10 @@ import from core.commons {
     orgs_for, pledge_cards, recent_activity, _my_account
 }
 import from core.reason {
-    EligibilityVerdict, LeakAudit, MatchVerdict,
+    EligibilityVerdict, LeakAudit, MatchVerdict, HelperOfferItem,
     audit_anonymization_safe, engine, escalation_strategy_safe, launch_match,
-    launch_requirement, next_step_nudge_safe, read_situation_safe, require_engine
+    launch_requirement, next_step_nudge_safe, read_helper_offers_safe,
+    read_situation_safe, require_engine
 }
 import from core.agent { drain_tool_trace, plan_strategy_safe }
 
@@ -1346,5 +1348,80 @@ walker:protect PledgeWalker {
             );
         }
         report jid(contribution);
+    }
+}
+
+
+walker:protect RetirePledgeWalker {
+    """Remove an offer from active matching without deleting history."""
+
+    has pledge_id: str;
+    has reports: list[str] = [];
+
+    can retire with Root entry {
+        target = jobj(self.pledge_id);
+        if isinstance(target, Contribution) {
+            target.remaining = 0;
+            log_walker("RetirePledgeWalker", f"retired pledge {self.pledge_id}");
+            report self.pledge_id;
+        }
+    }
+}
+
+
+walker:protect HelperOfferWalker {
+    """Turn a volunteer's free-text offer into expandable OfferViews + pledges."""
+
+    has text: str;
+    has reports: list[OfferView] = [];
+    has reply: str = "";
+
+    can start with Root entry {
+        ensure_commons();
+        require_engine("read_helper_offers");
+        acct = _my_account();
+        donors = [root --> [?:Donor]];
+        donor = donors[0] if donors else (
+            root ++> Donor(name=acct.display_name if acct is not None else "volunteer")
+        );
+
+        read = read_helper_offers_safe(self.text);
+        self.reply = read.reply;
+        orgs = [root.shared --> [?:Org]];
+        host = orgs[0] if orgs else None;
+
+        for (i, item) in enumerate(read.offers) {
+            kind = item.kind if item.kind in ["food", "goods", "funds", "time"] else "time";
+            detail_notes = item.notes;
+            if item.details {
+                joined = " | ".join(item.details);
+                detail_notes = (detail_notes + " — " + joined) if detail_notes else joined;
+            }
+            contribution = root.shared ++> Contribution(
+                kind=kind,
+                description=item.name + ": " + item.description,
+                capacity=1,
+                remaining=1,
+                notes=detail_notes
+            );
+            grant(contribution, level=WritePerm);
+            donor +>:Pledges:+> contribution;
+            if host is not None {
+                contribution +>:RoutedThrough:+> host;
+            }
+            report OfferView(
+                id="offer-" + str(i) + "-" + jid(contribution)[-8:],
+                name=item.name,
+                kind=kind,
+                description=item.description,
+                details=item.details,
+                notes=item.notes,
+                pledge_id=jid(contribution)
+            );
+        }
+        log_walker(
+            "HelperOfferWalker",
+            f"extracted {len(read.offers)} offer(s) from volunteer text"
+        );
     }
 }

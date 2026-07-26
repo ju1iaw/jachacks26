@@ -160,22 +160,53 @@ def flush_engine_log {
 }
 
 
-def:protect me -> AccountView {
-    ensure_engine();
-    rep = engine_report();
-    acct = _my_account();
+def _account_view(acct: Account | None, rep: EngineReport) -> AccountView {
+    email = "";
+    phone = "";
+    contact_method = "";
+    contact_value = "";
+    location = "";
+    notes = "";
+    role = "";
+    name = "";
+    if acct is not None {
+        role = acct.role;
+        name = acct.display_name;
+        contact_method = acct.contact_method;
+        contact_value = acct.contact_value;
+        email = acct.email;
+        phone = acct.phone;
+        location = acct.location;
+        notes = acct.eligibility_notes;
+        # Backfill from the single contact field used at signup.
+        if not email and contact_method == "email" and contact_value {
+            email = contact_value;
+        }
+        if not phone and contact_method == "phone" and contact_value {
+            phone = contact_value;
+        }
+    }
     return AccountView(
-        role=acct.role if acct is not None else "",
-        display_name=acct.display_name if acct is not None else "",
+        role=role,
+        display_name=name,
         engine=rep.mode,
         engine_model=rep.model,
         engine_reason=rep.reason,
         engine_calls=rep.calls,
         engine_roles=rep.roles,
-        contact_method=acct.contact_method if acct is not None else "",
-        contact_value=acct.contact_value if acct is not None else "",
-        location=acct.location if acct is not None else ""
+        contact_method=contact_method,
+        contact_value=contact_value,
+        email=email,
+        phone=phone,
+        location=location,
+        eligibility_notes=notes
     );
+}
+
+
+def:protect me -> AccountView {
+    ensure_engine();
+    return _account_view(_my_account(), engine_report());
 }
 
 
@@ -205,23 +236,55 @@ def:protect choose_role(
             grant(claim, level=ReadPerm);
         }
     }
+    if contact_method == "email" and contact_value {
+        acct.email = contact_value;
+    }
+    if contact_method == "phone" and contact_value {
+        acct.phone = contact_value;
+    }
     ensure_commons();
     if clean == "helper" and not [root --> [?:Donor]] {
         root ++> Donor(name=display_name);
     }
-    rep = engine_report();
-    return AccountView(
-        role=acct.role,
-        display_name=acct.display_name,
-        engine=rep.mode,
-        engine_model=rep.model,
-        engine_reason=rep.reason,
-        engine_calls=rep.calls,
-        engine_roles=rep.roles,
-        contact_method=acct.contact_method,
-        contact_value=acct.contact_value,
-        location=acct.location
-    );
+    return _account_view(acct, engine_report());
+}
+
+
+"""Update the signed-in person's profile from Settings.
+
+Role is fixed at signup — this never switches seeker ↔ helper.
+"""
+def:protect update_profile(
+    display_name: str,
+    email: str = "",
+    phone: str = "",
+    location: str = "",
+    eligibility_notes: str = ""
+) -> AccountView {
+    acct = _my_account();
+    if acct is None {
+        raise ValueError("No account on this root.");
+    }
+    name = display_name.strip();
+    if name {
+        acct.display_name = name;
+    }
+    acct.email = email.strip();
+    acct.phone = phone.strip();
+    acct.location = location.strip();
+    acct.eligibility_notes = eligibility_notes.strip();
+
+    # Keep the legacy single-contact fields in sync for older UI paths.
+    if acct.email {
+        acct.contact_method = "email";
+        acct.contact_value = acct.email;
+    } elif acct.phone {
+        acct.contact_method = "phone";
+        acct.contact_value = acct.phone;
+    }
+
+    ensure_commons();
+    return _account_view(acct, engine_report());
 }
 
 

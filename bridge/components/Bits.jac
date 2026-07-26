@@ -38,7 +38,7 @@ def:pub Brand(tagline: str = "") -> JsxElement {
         <img className="brand-logo" src="/assets/bridge-logo.png" alt="Bridge"/>
         <span>Bridge</span>
         {if tagline {
-            <small key="t">{" - " + tagline}</small>
+            <small className="brand-tagline" key="t">{tagline}</small>
         }}
     </div>;
 }

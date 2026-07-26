@@ -7,12 +7,13 @@ offers that are not yet redeemed also land under Ongoing.
 
 import from react { useEffect }
 import from .components.Bits {
-    ActivityFeed, AnsweredTrail, EngineBadge, PrivacyNote, StrategyCard
+    ActivityFeed, AnsweredTrail, PrivacyNote, StrategyCard
 }
 import from .components.Suggestions {
     ActionStep, OngoingPanel, Suggestion, SuggestionCard, demo_suggestions
 }
 
+sv import from .core.commons { me, update_profile }
 sv import from .core.graph {
     NeedCard, PlanStep, SeekerBoard, StrategyView, WalkerTrace
 }
@@ -160,11 +161,13 @@ def need_to_suggestion(card: NeedCard) -> Suggestion {
 
 def:pub SeekerView(
     display_name: str,
-    contact_method: str = "",
-    contact_value: str = "",
+    email: str = "",
+    phone: str = "",
     location: str = "",
+    eligibility_notes: str = "",
     panel: str = "home",
-    onHome: Callable[[], None] | None = None
+    onHome: Callable[[], None] | None = None,
+    onProfileSaved: Callable[[], None] | None = None
 ) -> JsxElement {
     has situation: str = "";
     has inbox: list[Suggestion] = [];
@@ -184,6 +187,16 @@ def:pub SeekerView(
     has clarify_reply: str = "";
     has answering: bool = False;
 
+    # Settings drafts
+    has draft_name: str = "";
+    has draft_email: str = "";
+    has draft_phone: str = "";
+    has draft_location: str = "";
+    has draft_notes: str = "";
+    has settings_msg: str = "";
+    has settings_err: str = "";
+    has settings_busy: bool = False;
+
     # The agent's brief (0 or 1), the trail of questions already answered, and
     # what the privacy auditor stripped before anything reached the commons.
     has strategy: list[StrategyView] = [];
@@ -191,8 +204,7 @@ def:pub SeekerView(
     has privacy_leaks: list[str] = [];
     has activity: list[WalkerTrace] = [];
 
-    # Engine evidence. `engine_calls` is what answers "is that really the model?"
-    # without anyone having to take it on trust.
+    # Engine evidence kept on the board for diagnostics; not shown in the UI.
     has engine: str = "";
     has engine_model: str = "";
     has engine_reason: str = "";
@@ -203,6 +215,9 @@ def:pub SeekerView(
     has handled_ref: Ref[list[str]] = Ref([]);
     has ongoing_ref: Ref[list[Suggestion]] = Ref([]);
     has past_ref: Ref[list[Suggestion]] = Ref([]);
+    # Blocks FulfillmentWalker polls from restoring a question while an answer
+    # is in flight (otherwise Yes/No looks like it did nothing).
+    has answering_ref: Ref[bool] = Ref(False);
 
     def apply(board: SeekerBoard) -> int;
     async def refresh -> None;
@@ -219,9 +234,22 @@ def:pub SeekerView(
     async def answer_clarify_no(e: MouseEvent) -> None;
     async def send_clarify_reply -> None;
     async def apply_clarify(ans: str) -> None;
+    async def open_settings_form -> None;
+    async def save_settings -> None;
+    def set_draft_name(e: ChangeEvent) -> None;
+    def set_draft_email(e: ChangeEvent) -> None;
+    def set_draft_phone(e: ChangeEvent) -> None;
+    def set_draft_location(e: ChangeEvent) -> None;
+    def set_draft_notes(e: ChangeEvent) -> None;
 
     async can with entry {
         refresh();
+    }
+
+    async can with [panel] entry {
+        if panel == "settings" {
+            await open_settings_form();
+        }
     }
 
     useEffect(lambda {
@@ -231,27 +259,49 @@ def:pub SeekerView(
 
     if panel == "settings" {
         return <div className="wrap seeker-page">
-            <div className="chat-panel">
+            <div className="chat-panel settings-panel">
                 <button className="btn ghost sm" type="button" onClick={go_home}>← Back</button>
                 <h1 className="chat-heading" style={{"marginTop": "18px"}}>Settings</h1>
-                <p className="muted" style={{"marginTop": "8px"}}>
-                    Details from signup stay on your private profile.
+                <p className="muted" style={{"marginTop": "8px", "marginBottom": "18px"}}>
+                    Update your profile and the eligibility details Bridge uses for suggestions.
                 </p>
-                <div className="card" style={{"marginTop": "18px"}}>
-                    <div className="eyebrow">Profile</div>
-                    <p style={{"marginTop": "8px"}}>{display_name}</p>
-                    <p className="small muted" style={{"marginTop": "6px"}}>Role: person in need</p>
-                    {if contact_value {
-                        <p className="small muted" key="c" style={{"marginTop": "6px"}}>
-                            {(contact_method if contact_method else "contact") + ": " + contact_value}
-                        </p>
-                    }}
-                    {if location {
-                        <p className="small muted" key="l" style={{"marginTop": "6px"}}>
-                            {"Location: " + location}
-                        </p>
-                    }}
+
+                <div className="card settings-card">
+                    <div className="eyebrow">Account</div>
+                    <label className="lbl" style={{"marginTop": "14px"}}>Name</label>
+                    <input className="field" value={draft_name} onChange={set_draft_name} placeholder="Your name"/>
+                    <label className="lbl" style={{"marginTop": "12px"}}>Email</label>
+                    <input className="field" value={draft_email} onChange={set_draft_email} placeholder="you@example.com"/>
+                    <label className="lbl" style={{"marginTop": "12px"}}>Phone number</label>
+                    <input className="field" value={draft_phone} onChange={set_draft_phone} placeholder="(555) 000-0000"/>
+                    <label className="lbl" style={{"marginTop": "12px"}}>Location</label>
+                    <input className="field" value={draft_location} onChange={set_draft_location} placeholder="City, neighborhood, or ZIP"/>
                 </div>
+
+                <div className="card settings-card" style={{"marginTop": "14px"}}>
+                    <div className="eyebrow">Eligibility details</div>
+                    <p className="small muted" style={{"marginTop": "8px", "marginBottom": "12px"}}>
+                        Filled from your chat requests when relevant — age, children, employment, and similar facts. Edit anything that looks wrong.
+                    </p>
+                    <textarea
+                        className="field eligibility-box"
+                        value={draft_notes}
+                        onChange={set_draft_notes}
+                        placeholder={"Household: 2 adults, 1 child\nEmployment: looking for work\nMissing: photo ID"}
+                    />
+                </div>
+
+                <div className="row" style={{"marginTop": "16px"}}>
+                    <button className="btn primary" type="button" onClick={save_settings} disabled={settings_busy}>
+                        {"Saving..." if settings_busy else "Save changes"}
+                    </button>
+                </div>
+                {if settings_msg {
+                    <p className="small" key="ok" style={{"marginTop": "10px", "color": "var(--ok)"}}>{settings_msg}</p>
+                }}
+                {if settings_err {
+                    <p className="err" key="err" style={{"marginTop": "10px"}}>{settings_err}</p>
+                }}
             </div>
         </div>;
     }
@@ -282,7 +332,7 @@ def:pub SeekerView(
     }
 
     return <div className="wrap seeker-page">
-        <div className="chat-panel">
+        <div className="seeker-chat">
             <h1 className="chat-heading">How may you be assisted?</h1>
             <p className="muted small" style={{"marginTop": "8px", "marginBottom": "16px"}}>
                 Describe what you need in plain words. Bridge returns programs you may qualify for.
@@ -311,7 +361,7 @@ def:pub SeekerView(
             {if nudge {
                 <div className="card tight" key="n" style={{
                     "borderColor": "var(--ok)",
-                    "background": "#141a16",
+                    "background": "#e9f0d1",
                     "marginTop": "14px"
                 }}>
                     <span className="pill ok"><span className="dot"></span>update</span>
@@ -349,33 +399,6 @@ def:pub SeekerView(
                 </div>
             }}
 
-            <div style={{"marginTop": "22px"}}>
-                <OngoingPanel
-                    items={ongoing}
-                    open={ongoing_open}
-                    onToggle={toggle_ongoing}
-                    onDismiss={dismiss_ongoing}
-                />
-            </div>
-
-            {if len(inbox) > 0 {
-                <div className="section-title" key="st">
-                    Suggested for you
-                    <span className="hint">tap to expand · swipe left to clear · accept to track</span>
-                </div>
-            }}
-            <div className="stack" style={{"gap": "10px"}}>
-                {for item in inbox {
-                    <SuggestionCard
-                        key={item.id}
-                        item={item}
-                        onAccept={accept_item}
-                        onDismiss={dismiss_item}
-                        show_accept={True}
-                    />
-                }}
-            </div>
-
             {if len(strategy) > 0 or len(answered) > 0 or len(privacy_leaks) > 0 {
                 <div className="section-title" key="wt">
                     Why you are seeing this
@@ -398,14 +421,34 @@ def:pub SeekerView(
                     <ActivityFeed key="af" items={activity}/>
                 }}
             </div>
+        </div>
 
-            <div className="row" style={{"marginTop": "18px", "justifyContent": "flex-end"}}>
-                <EngineBadge
-                    mode={engine}
-                    model={engine_model}
-                    calls={engine_calls}
-                    reason={engine_reason}
-                    roles={engine_roles}
+        <div className="seeker-cols" style={{"marginTop": "28px"}}>
+            <div className="seeker-left">
+                {if len(inbox) > 0 {
+                    <div className="section-title" key="st" style={{"marginTop": "0"}}>
+                        Suggested for you
+                        <span className="hint">tap to expand · swipe left to clear · accept to track</span>
+                    </div>
+                }}
+                <div className="stack" style={{"gap": "10px"}}>
+                    {for item in inbox {
+                        <SuggestionCard
+                            key={item.id}
+                            item={item}
+                            onAccept={accept_item}
+                            onDismiss={dismiss_item}
+                            show_accept={True}
+                        />
+                    }}
+                </div>
+            </div>
+            <div className="seeker-right">
+                <OngoingPanel
+                    items={ongoing}
+                    open={ongoing_open}
+                    onToggle={toggle_ongoing}
+                    onDismiss={dismiss_ongoing}
                 />
             </div>
         </div>

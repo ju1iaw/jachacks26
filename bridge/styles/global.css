@@ -50,7 +50,11 @@ input, textarea, select { font: inherit; color: inherit; }
 
 .brand { display: flex; align-items: center; gap: 10px; font-weight: 660; letter-spacing: -0.02em; }
 .brand-logo { width: 44px; height: 34px; object-fit: contain; flex: none; }
-.brand small { color: var(--muted); font-weight: 450; letter-spacing: 0; }
+.brand small, .brand-tagline {
+  color: var(--muted); font-weight: 450; letter-spacing: 0;
+  font-style: italic; margin-left: 2px;
+}
+.topbar .brand-tagline { color: #fffdf2; }
 
 .cols { display: grid; grid-template-columns: minmax(0, 1fr) 330px; gap: 22px; align-items: start; }
 @media (max-width: 940px) { .cols { grid-template-columns: minmax(0, 1fr); } }
@@ -392,9 +396,11 @@ label.lbl { display: block; font-size: 12.5px; color: var(--muted); margin-botto
 .icon-btn.on { color: var(--cool-dim); background: rgba(57,174,169,.12); border-color: var(--cool); }
 .icon-glyph { font-size: 16px; line-height: 1; font-weight: 500; }
 .icon-glyph.list { font-size: 18px; letter-spacing: -0.04em; }
+.icon-btn.settings { width: 46px; height: 46px; }
+.icon-glyph.settings { font-size: 24px; }
 
 .seeker-page { padding-top: 8px; }
-.chat-panel { max-width: 640px; margin: 0 auto; }
+.chat-panel, .seeker-chat { max-width: 720px; margin: 0 auto; }
 .chat-heading {
   font-size: clamp(26px, 4vw, 34px);
   letter-spacing: -0.03em;
@@ -402,8 +408,20 @@ label.lbl { display: block; font-size: 12.5px; color: var(--muted); margin-botto
   text-align: center;
   color: #fffdf2;
 }
-.chat-panel > .muted { color: rgba(255,253,242,.82); }
+.chat-panel > .muted,
+.seeker-chat > .muted { color: rgba(255,253,242,.82); }
 .chat-box { min-height: 120px; font-size: 15.5px; }
+
+.seeker-cols {
+  display: grid;
+  grid-template-columns: minmax(0, 1.2fr) minmax(280px, 0.85fr);
+  gap: 22px;
+  align-items: start;
+}
+@media (max-width: 900px) {
+  .seeker-cols { grid-template-columns: minmax(0, 1fr); }
+}
+.seeker-right .ongoing { position: sticky; top: 78px; }
 
 .ongoing {
   border: 1px solid var(--line);
@@ -499,6 +517,68 @@ label.lbl { display: block; font-size: 12.5px; color: var(--muted); margin-botto
 
 .section-title { color: rgba(255,253,242,.78); }
 .section-title .hint { color: rgba(255,253,242,.65); }
+
+.settings-panel .chat-heading { text-align: left; }
+.settings-card .lbl { margin-bottom: 6px; }
+.eligibility-box { min-height: 140px; line-height: 1.55; }
+.settings-panel .choice { cursor: pointer; }
+.settings-panel .btn.ghost { color: #fffdf2; border-color: rgba(255,253,242,.35); }
+.settings-panel .btn.ghost:hover { background: rgba(255,253,242,.12); color: #fffdf2; }
+
+/* ---------- helper / donor page ---------- */
+
+.helper-page { padding-top: 8px; }
+.helper-chat { max-width: 720px; margin: 0 auto; }
+.helper-cols {
+  display: grid;
+  grid-template-columns: minmax(0, 1.2fr) minmax(280px, 0.85fr);
+  gap: 22px;
+  align-items: start;
+}
+@media (max-width: 900px) {
+  .helper-cols { grid-template-columns: minmax(0, 1fr); }
+}
+
+.need-section {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 16px 18px 18px;
+}
+.need-section-head {
+  display: flex; align-items: center; gap: 10px;
+  margin-bottom: 14px;
+}
+.need-section-title {
+  font-size: 16px; font-weight: 640; letter-spacing: -0.02em;
+  color: var(--text);
+}
+.org-label {
+  font-size: 11.5px; font-weight: 620; letter-spacing: 0.06em;
+  text-transform: uppercase; color: var(--cool-dim);
+  margin: 0 0 6px 2px;
+}
+.notif-badge {
+  min-width: 22px; height: 22px; padding: 0 7px;
+  border-radius: 999px;
+  background: #c94444; color: #fffdf2;
+  font-size: 12px; font-weight: 700;
+  display: inline-flex; align-items: center; justify-content: center;
+  line-height: 1;
+}
+.show-completed {
+  display: inline-flex; align-items: center; gap: 8px;
+  border: none; background: transparent; color: var(--muted);
+  font-size: 13px; font-weight: 560; padding: 4px 0;
+}
+.show-completed:hover { color: var(--text); }
+.completed-wrap { opacity: 0.55; filter: grayscale(0.35); }
+.completed-wrap .tile {
+  background: #e8ebe0;
+  border-color: #c5cdc0;
+}
+.offer-card.muted-card { opacity: 0.62; }
+.offers-panel { position: sticky; top: 78px; }
 
 @media (max-width: 640px) {
   .chat-heading { text-align: left; }
