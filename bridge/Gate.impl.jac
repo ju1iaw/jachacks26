@@ -3,6 +3,27 @@
 impl Gate.do_login -> None {
     ok: bool = False;
     account: AccountView | None = None;
+    clean_login = email.strip();
+    if login_method == "email" {
+        email_parts = clean_login.split("@");
+        if (
+            len(email_parts) != 2
+            or not email_parts[0]
+            or "." not in email_parts[1]
+            or email_parts[1].startswith(".")
+            or email_parts[1].endswith(".")
+            or " " in clean_login
+        ) {
+            error = "Enter a valid email address.";
+            return;
+        }
+    } else {
+        phone_digits = "".join([char for char in clean_login if char.isdigit()]);
+        if len(phone_digits) < 10 or len(phone_digits) > 15 {
+            error = "Enter a valid phone number with 10 to 15 digits.";
+            return;
+        }
+    }
     busy = True;
     error = "";
     try {
@@ -118,6 +139,27 @@ impl Gate.next_name(e: MouseEvent) -> None {
 
 impl Gate.next_contact -> None {
     if contact_value.strip() {
+        clean_contact = contact_value.strip();
+        if contact_method == "email" {
+            email_parts = clean_contact.split("@");
+            if (
+                len(email_parts) != 2
+                or not email_parts[0]
+                or "." not in email_parts[1]
+                or email_parts[1].startswith(".")
+                or email_parts[1].endswith(".")
+                or " " in clean_contact
+            ) {
+                error = "Enter a valid email address, or skip for now.";
+                return;
+            }
+        } else {
+            phone_digits = "".join([char for char in clean_contact if char.isdigit()]);
+            if len(phone_digits) < 10 or len(phone_digits) > 15 {
+                error = "Enter a valid phone number with 10 to 15 digits, or skip for now.";
+                return;
+            }
+        }
         busy = True;
         exists: bool = False;
         try {
@@ -166,21 +208,39 @@ impl Gate.load_address_suggestions -> None {
     if len(location.strip()) < 4 or address_valid {
         return;
     }
+    query = location.strip();
+    search_sequence.current += 1;
+    request_id = search_sequence.current;
     searching_address = True;
     address_error = "";
     try {
-        address_suggestions = await suggest_addresses(location);
-        if len(address_suggestions) == 0 {
+        results = await suggest_addresses(query);
+        if request_id != search_sequence.current {
+            return;
+        }
+        address_suggestions = results;
+        if len(results) > 0 {
+            address_error = "";
+            map_url = results[0]["map_url"];
+        } else {
+            map_url = "";
             address_error = "No matching places found. Try adding a city, state, or ZIP.";
         }
     } except Exception {
+        if request_id != search_sequence.current {
+            return;
+        }
         address_suggestions = [];
+        map_url = "";
         address_error = "Place search is unavailable right now. Try again in a moment.";
     }
-    searching_address = False;
+    if request_id == search_sequence.current {
+        searching_address = False;
+    }
 }
 
 impl Gate.select_address(suggestion: dict[str, str]) -> None {
+    search_sequence.current += 1;
     location = suggestion["label"];
     map_url = suggestion["map_url"];
     address_valid = True;

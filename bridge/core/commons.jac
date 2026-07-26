@@ -38,7 +38,13 @@ def _my_account -> Account | None {
 }
 
 def _contact_digest(method: str, value: str) -> str {
-    normalized = method.strip().lower() + ":" + value.strip().lower();
+    clean_method = method.strip().lower();
+    clean_value = (
+        "".join([char for char in value if char.isdigit()])
+        if clean_method == "phone"
+        else value.strip().lower()
+    );
+    normalized = clean_method + ":" + clean_value;
     return sha256(normalized.encode()).hexdigest();
 }
 

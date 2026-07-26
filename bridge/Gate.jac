@@ -6,7 +6,7 @@ graph, not anyone else's.
 """
 
 import from "@jac/runtime" { jacLogin, jacLogout, jacSignup }
-import from react { useEffect }
+import from react { useEffect, useRef }
 import from .components.Bits { Brand }
 
 sv import from .core.commons { choose_role, contact_registered, me, suggest_addresses }
@@ -32,6 +32,7 @@ def:pub Gate(onReady: Callable[[], None]) -> JsxElement {
     has searching_address: bool = False;
     has busy: bool = False;
     has error: str = "";
+    search_sequence: any = useRef(0);
 
     async def do_login -> None;
     async def finish_signup -> None;
@@ -55,7 +56,7 @@ def:pub Gate(onReady: Callable[[], None]) -> JsxElement {
             address_suggestions = [];
             return;
         }
-        timer = setTimeout(lambda { load_address_suggestions(); }, 450);
+        timer = setTimeout(lambda { load_address_suggestions(); }, 300);
         return lambda { clearTimeout(timer); };
     }, [location, stage, address_valid]);
 
@@ -152,8 +153,13 @@ def:pub Gate(onReady: Callable[[], None]) -> JsxElement {
                                 className="field hero-field"
                                 type={"email" if contact_method == "email" else "tel"}
                                 value={contact_value}
+                                autocomplete={"email" if contact_method == "email" else "tel"}
+                                maxlength={"254" if contact_method == "email" else "25"}
                                 placeholder={"you@example.com" if contact_method == "email" else "(555) 123-4567"}
-                                onChange={lambda (e: ChangeEvent) { contact_value = e.target.value; }}
+                                onChange={lambda (e: ChangeEvent) {
+                                    contact_value = e.target.value;
+                                    error = "";
+                                }}
                             />
                             <button className="btn primary full" onClick={next_contact} disabled={busy}>
                                 {"Checking…" if busy else ("Continue" if contact_value.strip() else "Skip for now")}
@@ -180,10 +186,12 @@ def:pub Gate(onReady: Callable[[], None]) -> JsxElement {
                                 placeholder="Search for an address or place"
                                 autocomplete="off"
                                 onChange={lambda (e: ChangeEvent) {
+                                    search_sequence.current += 1;
                                     location = e.target.value;
                                     address_valid = False;
                                     address_error = "";
                                     map_url = "";
+                                    searching_address = False;
                                 }}
                             />
 
@@ -211,17 +219,22 @@ def:pub Gate(onReady: Callable[[], None]) -> JsxElement {
                                 <p className="address-error" key="address-error">{address_error}</p>
                             }}
 
-                            {if address_valid {
+                            {if map_url {
                                 <div className="map-card" key="map">
                                     <iframe
                                         className="address-map"
                                         src={map_url}
-                                        title="Verified address map"
+                                        title={"Selected address map" if address_valid else "Best address match map preview"}
                                         loading="lazy"
                                     ></iframe>
                                     <div className="map-confirmed">
                                         <span className="map-pin">●</span>
-                                        <span><b>Location selected</b><small>{location}</small></span>
+                                        <span>
+                                            <b>{"Location selected" if address_valid else "Best match preview"}</b>
+                                            <small>
+                                                {location if address_valid else "Choose a suggestion above to confirm this pin."}
+                                            </small>
+                                        </span>
                                     </div>
                                     <a
                                         className="map-attribution"
@@ -285,8 +298,12 @@ def:pub Gate(onReady: Callable[[], None]) -> JsxElement {
                         type={"email" if login_method == "email" else "tel"}
                         value={email}
                         autocomplete={"email" if login_method == "email" else "tel"}
+                        maxlength={"254" if login_method == "email" else "25"}
                         placeholder={"you@example.com" if login_method == "email" else "(555) 123-4567"}
-                        onChange={lambda (e: ChangeEvent) { email = e.target.value; }}
+                        onChange={lambda (e: ChangeEvent) {
+                            email = e.target.value;
+                            error = "";
+                        }}
                     />
 
                     <label className="lbl" style={{"marginTop": "12px"}}>Password</label>

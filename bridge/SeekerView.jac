@@ -44,18 +44,33 @@ def step_to_suggestion(step: PlanStep, qualify: list[PlanStep] = []) -> Suggesti
 
     if blocked {
         for fix in qualify {
-            label = fix.title[7:] if fix.title.startswith("First: ") else fix.title;
-            steps = steps + [ActionStep(text="To qualify — " + label + ": " + fix.detail)];
+            fix_link = "";
+            fix_link_label = "";
+            if step.org_phone and "call" in fix.detail.lower() {
+                fix_link = "tel:" + step.org_phone.replace(" ", "").replace("-", "");
+                fix_link_label = "Call " + step.org_phone;
+            }
+            steps = steps + [ActionStep(
+                text=fix.detail,
+                link=fix_link,
+                link_label=fix_link_label,
+                label="Do this first",
+                required=True
+            )];
         }
         if len(qualify) == 0 {
             # Nothing reasoned for this gate, so fall back to naming it plainly
             # rather than inventing an unblock the model did not produce.
             if step.blocker {
-                steps = steps + [ActionStep(text="To qualify, you still need: " + step.blocker)];
+                steps = steps + [ActionStep(
+                    text="Get or confirm: " + step.blocker + ".",
+                    label="Do this first",
+                    required=True
+                )];
             }
-        }
-        if step.detail {
-            steps = steps + [ActionStep(text=step.detail)];
+        # The old card repeated the organisation's address, hours, and notes as
+        # a numbered instruction. The concrete call and visit actions below are
+        # clearer and avoid making background information look like a task.
         }
     } else {
         primary = step.detail if step.detail else "You look eligible — you can go ahead.";
@@ -70,15 +85,19 @@ def step_to_suggestion(step: PlanStep, qualify: list[PlanStep] = []) -> Suggesti
         steps = steps + [ActionStep(
             text="Call if you need hours or to confirm what to bring.",
             link=link,
-            link_label=link_label
+            link_label=link_label,
+            label="Contact the program"
         )];
     }
     if step.org_address {
-        steps = steps + [ActionStep(text="Go to " + step.org_address + ".")];
+        steps = steps + [ActionStep(
+            text="Go to " + step.org_address + ".",
+            label="When you’re ready"
+        )];
     }
 
     desc = (
-        "You don't qualify yet — follow the steps below, then you can use this program."
+        "This program has a requirement to complete first. Check off each step as you finish it."
         if blocked
         else "You appear eligible for this program."
     );
@@ -92,7 +111,7 @@ def step_to_suggestion(step: PlanStep, qualify: list[PlanStep] = []) -> Suggesti
         description=desc,
         steps=steps,
         kind="blocked" if blocked else "program",
-        badge="qualify first" if blocked else "eligible"
+        badge="steps to qualify" if blocked else "eligible"
     );
 }
 

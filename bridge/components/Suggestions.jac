@@ -10,6 +10,8 @@ obj ActionStep {
     has text: str;
     has link: str = "";
     has link_label: str = "";
+    has label: str = "";
+    has required: bool = False;
 }
 
 
@@ -88,6 +90,7 @@ def:pub SuggestionCard(
     has dragging: bool = False;
     has start_x: float = 0.0;
     has dismissing: bool = False;
+    has completed_steps: list[int] = [];
 
     def event_x(e: any) -> float {
         touches = e.touches;
@@ -112,6 +115,15 @@ def:pub SuggestionCard(
         e.stopPropagation();
         if onAccept {
             onAccept(item.id);
+        }
+    }
+
+    def toggle_step(e: MouseEvent, idx: int) -> None {
+        e.stopPropagation();
+        if idx in completed_steps {
+            completed_steps = [done for done in completed_steps if done != idx];
+        } else {
+            completed_steps = completed_steps + [idx];
         }
     }
 
@@ -144,8 +156,22 @@ def:pub SuggestionCard(
         drag_x = 0.0;
     }
 
-    kind_pill = item.badge if item.badge else ("helper offer" if item.kind == "helper" else "program");
-    kind_tone = "cool" if item.kind == "helper" else ("danger" if item.kind == "blocked" else "warm");
+    required_indexes = [i for (i, step) in enumerate(item.steps) if step.required];
+    qualification_done = (
+        item.kind == "blocked"
+        and len(required_indexes) > 0
+        and len([i for i in required_indexes if i in completed_steps]) == len(required_indexes)
+    );
+    kind_pill = (
+        "qualified"
+        if qualification_done
+        else (item.badge if item.badge else ("helper offer" if item.kind == "helper" else "program"))
+    );
+    kind_tone = (
+        "ok"
+        if qualification_done
+        else ("cool" if item.kind == "helper" else ("danger" if item.kind == "blocked" else "warm"))
+    );
 
     card_class = "suggest-card";
     if dragging {
@@ -183,24 +209,44 @@ def:pub SuggestionCard(
             {if open {
                 <div className="suggest-body" key="body">
                     {if item.description {
-                        <p className="suggest-desc" key="d">{item.description}</p>
+                        <p className="suggest-desc" key="d">
+                            {
+                                "You’ve completed the qualification steps. Contact the program to confirm and get started."
+                                if qualification_done
+                                else item.description
+                            }
+                        </p>
                     }}
-                    <ol className="suggest-steps">
+                    <ol className="suggest-steps action-checklist">
                         {for (i, step) in enumerate(item.steps) {
-                            <li key={str(i)}>
-                                <span>{step.text}</span>
-                                {if step.link {
-                                    <a
-                                        key="l"
-                                        className="suggest-link"
-                                        href={step.link}
-                                        target="_blank"
-                                        rel="noreferrer"
-                                        onClick={lambda (e: MouseEvent) { e.stopPropagation(); }}
-                                    >
-                                        {step.link_label if step.link_label else step.link}
-                                    </a>
-                                }}
+                            <li className={"complete" if i in completed_steps else ""} key={str(i)}>
+                                <button
+                                    className="step-check"
+                                    type="button"
+                                    aria-label={"Mark step incomplete" if i in completed_steps else "Mark step complete"}
+                                    aria-pressed={i in completed_steps}
+                                    onClick={lambda (e: MouseEvent) { toggle_step(e, i); }}
+                                >
+                                    {"✓" if i in completed_steps else ""}
+                                </button>
+                                <div className="step-content">
+                                    {if step.label {
+                                        <b className="step-label" key="label">{step.label}</b>
+                                    }}
+                                    <span>{step.text}</span>
+                                    {if step.link {
+                                        <a
+                                            key="l"
+                                            className="suggest-link"
+                                            href={step.link}
+                                            target="_blank"
+                                            rel="noreferrer"
+                                            onClick={lambda (e: MouseEvent) { e.stopPropagation(); }}
+                                        >
+                                            {step.link_label if step.link_label else step.link}
+                                        </a>
+                                    }}
+                                </div>
                             </li>
                         }}
                     </ol>
