@@ -19,7 +19,7 @@ sv import from .core.graph {
 sv import from .core.walkers { FulfillmentWalker, IntakeWalker }
 
 
-glob EXAMPLE: str = "I need food for me and my two kids this week. I lost my ID when we left the apartment, I don't have a car, and where we're staying has no stove. Zip is 94110.";
+glob EXAMPLE: str = "I need food for me and my two kids this week. I lost my ID when we left the apartment, I don't have a car, and where we're staying has no stove. We also got an eviction notice for the room we're in. Zip is 94110.";
 
 
 def:pub SeekerView(display_name: str) -> JsxElement {

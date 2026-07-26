@@ -28,9 +28,27 @@ rm -rf .jac
 
 echo "starting the server..."
 jac start --dev main.jac > /tmp/bridge.log 2>&1 < /dev/null &
-for _ in $(seq 1 40); do
+
+# Wait for the API, not the page. `jac start --dev` serves the client from vite
+# on :8000 and proxies /walker,/function,/user to the API on :8001 -- and vite
+# answers 200 well before the API is listening. Polling :8000 therefore returns
+# success while every seeding call still gets ECONNREFUSED through the proxy,
+# which silently left the demo with no accounts. Poll a real API round trip.
+echo "waiting for the API to accept requests..."
+ready=""
+for _ in $(seq 1 90); do
   sleep 1
-  if curl -s -o /dev/null http://localhost:8000/; then break; fi
+  if curl -s -m 3 -X POST http://localhost:8000/function/bootstrap \
+       -H 'Content-Type: application/json' -d '{}' 2>/dev/null | grep -q '"ok":true'; then
+    ready="yes"
+    break
+  fi
 done
+
+if [ -z "$ready" ]; then
+  echo "!! the API never became ready -- check /tmp/bridge.log" >&2
+  exit 1
+fi
+echo "API is up."
 
 ./scripts/seed_demo.sh

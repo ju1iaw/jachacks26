@@ -35,7 +35,7 @@ if [ -z "$MARIA" ] || [ -z "$SAM" ]; then
   exit 1
 fi
 
-SITUATION='I need food for me and my two kids this week. I lost my ID when we left the apartment, I do not have a car, and where we are staying has no stove. Zip is 94110.'
+SITUATION='I need food for me and my two kids this week. I lost my ID when we left the apartment, I do not have a car, and where we are staying has no stove. We also got an eviction notice for the room we are in. Zip is 94110.'
 
 hr "1. Maria describes her situation  (IntakeWalker -> EligibilityPathWalker -> NeedBroadcastWalker)"
 spawn "$MARIA" IntakeWalker "{\"situation\":\"$SITUATION\"}" | $FMT board

@@ -23,7 +23,7 @@ import from core.reason {
 import from core.agent { drain_tool_trace, plan_strategy_safe }
 
 
-glob SITUATION: str = "I need food for me and my two kids this week. I lost my ID when we left the apartment, I don't have a car, and where we're staying has no stove. Zip is 94110.";
+glob SITUATION: str = "I need food for me and my two kids this week. I lost my ID when we left the apartment, I don't have a car, and where we're staying has no stove. We also got an eviction notice for the room we're in. Zip is 94110.";
 
 glob EXPECTED_ROLES: list[str] = [
     "read_situation",

@@ -1,10 +1,23 @@
 """End-to-end smoke run of the whole Bridge walker chain on one local graph.
 
-    jac run scripts/smoke.jac
+    rm -rf .jac && jac run scripts/smoke.jac      # always start clean
 
 Under `jac run` there is one root and `root.shared is root`, so both "users"
 share a graph -- fine for exercising the walkers, but the real per-user
 isolation only shows up under `jac start`. See scripts/demo_flow.sh for that.
+
+**Reset between runs.** Re-running this script over a `.jac/` left behind by a
+previous run intermittently dies at commit with
+`WriteConflict: anchor ... changed concurrently (expected v1, found v2)`. It
+happens when re-intake deletes the previous run's Needs while several of them are
+also being escalated, and it reproduces identically on the pre-byLLM version of
+this code -- so it is a property of re-running a `jac run` script against a
+persisted store, which the Jac docs warn about ("Re-running a script duplicates
+its nodes ... reset with `jac clean --all`"), not of the walker logic.
+
+It does **not** affect the server. `scripts/demo_flow.sh` drives the same chain
+through the API as two separate logged-in users, repeatedly, against a graph that
+persists between calls, and stays clean -- that is the path the demo runs on.
 """
 
 import from core.commons { choose_role, ensure_commons, engine_report }
@@ -38,7 +51,7 @@ with entry:__main__ {
 
     line("IntakeWalker");
     intake = root spawn IntakeWalker(
-        situation="I need food for me and my two kids this week. I lost my ID when we left the apartment, I don't have a car, and we're staying somewhere with no stove. Zip is 94110."
+        situation="I need food for me and my two kids this week. I lost my ID when we left the apartment, I don't have a car, and we're staying somewhere with no stove. We also got an eviction notice for the room we're in. Zip is 94110."
     );
     board = intake.reports[0];
     print("engine:", board.engine);
@@ -68,19 +81,19 @@ with entry:__main__ {
     }
 
     line("StrategyWalker (the ReAct caseworker)");
-    for sv in board.strategy {
-        print(f"headline    : {sv.headline}");
-        print(f"first action: {sv.first_action}");
+    for brief in board.strategy {
+        print(f"headline    : {brief.headline}");
+        print(f"first action: {brief.first_action}");
         print("ordered plan:");
-        for (i, action) in enumerate(sv.ordered_actions) {
+        for (i, action) in enumerate(brief.ordered_actions) {
             print(f"  {i + 1}. {action}");
         }
-        print(f"community?  : {sv.rely_on_community}");
-        print(f"risk        : {sv.risk}");
-        print(f"note        : {sv.research_note}");
+        print(f"community?  : {brief.rely_on_community}");
+        print(f"risk        : {brief.risk}");
+        print(f"note        : {brief.research_note}");
         print("research path the agent CHOSE to take:");
-        if sv.research_path {
-            for call in sv.research_path {
+        if brief.research_path {
+            for call in brief.research_path {
                 print(f"  - {call}");
             }
         } else {

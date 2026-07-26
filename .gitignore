@@ -1,0 +1,5 @@
+# Jac build + persistence artifacts (also ignored inside bridge/)
+.jac/
+
+# Never commit real API keys
+.env
