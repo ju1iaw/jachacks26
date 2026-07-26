@@ -34,6 +34,9 @@ node Account {
 
     has role: str;
     has display_name: str;
+    has contact_method: str = "";
+    has contact_value: str = "";
+    has location: str = "";
 }
 
 

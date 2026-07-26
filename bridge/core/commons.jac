@@ -87,7 +87,13 @@ def:protect me -> AccountView {
 
 
 """Claim a side of Bridge. Called once, right after signup."""
-def:protect choose_role(role: str, display_name: str) -> AccountView {
+def:protect choose_role(
+    role: str,
+    display_name: str,
+    contact_method: str = "",
+    contact_value: str = "",
+    location: str = ""
+) -> AccountView {
     clean = role if role in ["seeker", "helper"] else "seeker";
     acct = _my_account();
     if acct is None {
@@ -96,6 +102,9 @@ def:protect choose_role(role: str, display_name: str) -> AccountView {
         acct.role = clean;
         acct.display_name = display_name;
     }
+    acct.contact_method = contact_method;
+    acct.contact_value = contact_value;
+    acct.location = location;
     ensure_commons();
     if clean == "helper" and not [root --> [?:Donor]] {
         root ++> Donor(name=display_name);
