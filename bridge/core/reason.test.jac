@@ -10,7 +10,7 @@ or the call raises. These tests cover:
     contract (schema injection, typed parse, unit clamping) without a network
     call.
   * **Engine honesty** -- with no key, `require_engine` raises immediately,
-    before any of the eight roles even attempt a call. A transient per-call
+    before any of the seven roles even attempt a call. A transient per-call
     failure records itself for display but does NOT permanently downgrade the
     engine -- a rate-limit blip should not brick the app until restart.
   * **Parallel launches** -- `flow` inside a comprehension captures the loop
@@ -35,7 +35,9 @@ LLM code path run against scripted structured outputs. Forcing `ENGINE` avoids a
 preflight network call.
 """
 def _use_mock(outputs: list) {
-    llm = MockLLM(model_name="mockllm", config={"outputs": outputs});
+    # MockLLM stands in for a Model at runtime but is not a declared subclass, so
+    # the cast is what lets it bind to the `Model`-typed glob.
+    llm = MockLLM(model_name="mockllm", config={"outputs": outputs}) as Model;
     ENGINE.checked = True;
     ENGINE.mode = "llm";
     ENGINE.reason = "";
@@ -230,61 +232,50 @@ test "drain_degrade_log hands over the lines and empties itself" {
 
 
 # ===========================================================================
-# Parallel launches stay aligned with their inputs
+# The launch_* wrappers
 # ===========================================================================
+#
+# `flow` inside a comprehension captures the loop variable by REFERENCE, so a
+# future built inline reads whatever the last iteration left behind. That produced
+# a real bug once: every eligibility gate on an org got the LAST gate's verdict,
+# silently turning blocked orgs into "you qualify". Going through a function call
+# gives each future its own parameter binding, which is the only reason
+# `launch_requirement` / `launch_match` exist.
+#
+# This is tested on a pure function rather than through the real roles on purpose.
+# MockLLM hands out its canned outputs in call order, and three *concurrent* calls
+# have no deterministic order -- so driving this through `by llm()` would test the
+# mock's scheduling, not the argument binding. Here the assertion is exact.
 
-test "parallel gate judgements stay aligned with their gates" {
-    _reset_engine();
-    _use_mock([
-        EligibilityVerdict(satisfied=False, reasoning="no ID on file", unblock_action="Visit the DMV."),
-        EligibilityVerdict(satisfied=True, reasoning="self-attested income", unblock_action=""),
-        EligibilityVerdict(satisfied=False, reasoning="walk-ins turned away", unblock_action="Call at 8am.")
-    ]);
+def _echo(tag: str) -> str {
+    return tag;
+}
 
+
+def _launch_echo(tag: str) -> any {
+    return flow _echo(tag);
+}
+
+
+test "a flow launched through a wrapper binds its own argument" {
+    tags = ["first", "second", "third", "fourth", "fifth"];
+    pending = [_launch_echo(t) for t in tags];
+    got: list[str] = [wait f for f in pending];
+
+    # Inline `flow _echo(t)` here would yield five copies of "fifth".
+    assert got == tags;
+}
+
+
+test "the real launchers hand back one future per call" {
     gates = [
         ["Government-issued photo ID", "document", "Visit the DMV."],
-        ["Household income under 125% FPL", "income", ""],
-        ["Intake appointment booked in advance", "appointment", "Call at 8am."]
+        ["Household income under 125% FPL", "income", ""]
     ];
     pending = [
         launch_requirement("I lost my ID.", "nothing confirmed", g[0], g[1], g[2])
         for g in gates
     ];
-    verdicts: list[EligibilityVerdict] = [wait f for f in pending];
-
-    assert len(verdicts) == 3;
-    # If `flow` late-bound the loop variable these would all be identical.
-    assert not verdicts[0].satisfied;
-    assert verdicts[1].satisfied;
-    assert not verdicts[2].satisfied;
-    assert "DMV" in verdicts[0].unblock_action;
-    assert "8am" in verdicts[2].unblock_action;
-    _reset_engine();
-}
-
-
-test "parallel match judgements stay aligned with their pledges" {
-    _reset_engine();
-    _use_mock([
-        MatchVerdict(fits=False, score=15, units=0, rationale="needs cooking, no stove"),
-        MatchVerdict(fits=True, score=92, units=3, rationale="ready to eat, no stove needed")
-    ]);
-
-    pledges = [
-        ["40lb of dry rice, beans and pasta", "Pickup only."],
-        ["12 ready-to-eat family meal boxes", "Can be delivered."]
-    ];
-    pending = [
-        launch_match(
-            "Needs groceries. Household of 3; no way to cook.",
-            "food", 3, "food", p[0], p[1], 10
-        )
-        for p in pledges
-    ];
-    verdicts: list[MatchVerdict] = [wait f for f in pending];
-
-    assert len(verdicts) == 2;
-    assert not verdicts[0].fits;   # needs cooking
-    assert verdicts[1].fits;       # ready to eat
-    _reset_engine();
+    assert len(pending) == 2;
+    assert pending[0] is not pending[1];
 }

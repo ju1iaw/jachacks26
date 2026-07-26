@@ -37,19 +37,43 @@ fi
 
 SITUATION='I need food for me and my two kids this week. I lost my ID when we left the apartment, I do not have a car, and where we are staying has no stove. We also got an eviction notice for the room we are in. Zip is 94110.'
 
-hr "1. Maria describes her situation  (IntakeWalker -> EligibilityPathWalker -> NeedBroadcastWalker)"
-spawn "$MARIA" IntakeWalker "{\"situation\":\"$SITUATION\"}" | $FMT board
+hr "1. Maria describes her situation  (IntakeWalker -> EligibilityPathWalker -> NeedBroadcastWalker -> StrategyWalker)"
+INTAKE="$(spawn "$MARIA" IntakeWalker "{\"situation\":\"$SITUATION\"}")"
+echo "$INTAKE" | $FMT board
 
-hr "2. What Sam is allowed to see  (CommunityBoard)"
+hr "2. The one thing the caseworker agent could not settle by itself"
+# This comes off the SAME response as step 1 -- the question is a field on the
+# strategy brief, not a second round trip to the model.
+echo "$INTAKE" | $FMT question
+
+hr "3. Maria answers, and the whole chain re-runs on it  (AnswerWalker)"
+# Not a stored answer: intake re-reads her enriched story, every gate is re-judged
+# against it, the needs are rebuilt and the agent re-plans. Watch the orgs that
+# demand paperwork move down and the no-barrier ones move up.
+#
+# A plain "no", because the agent picks its own question from its research -- a
+# reply tailored to one gate would not fit whichever one it actually chose.
+spawn "$MARIA" AnswerWalker \
+  '{"answer":"No -- I lost everything when we left, so I do not have that."}' | $FMT board
+
+hr "4. What Sam is allowed to see  (CommunityBoard)"
+# Note the statuses: the needs that the standing pledges could cover are ALREADY
+# matched. Nobody ran a matcher -- NeedBroadcastWalker woke it as each need
+# landed, inside Maria's own requests above.
 spawn "$SAM" CommunityBoard '{}' | $FMT cards
 
-hr "3. Sam runs the matcher  (MatchWalker - fit, not category equality)"
-spawn "$SAM" MatchWalker '{}' | $FMT matches
+hr "5. Sam pledges something  (PledgeWalker - and the match happens on arrival)"
+ORG="$(spawn "$SAM" CommunityBoard '{}' \
+  | python3 -c 'import sys,json; v=json.load(sys.stdin)["data"]["reports"][0]; print(next(o["org_id"] for o in v["orgs"] if o["name"]=="Bayview Free Pantry"))')"
+spawn "$SAM" PledgeWalker "{\"kind\":\"food\",
+  \"description\":\"6 ready-to-eat family dinners, delivered, no cooking required\",
+  \"capacity\":6,\"org_id\":\"$ORG\",\"notes\":\"I can drop these at the pantry or deliver.\"}" >/dev/null
+spawn "$SAM" CommunityBoard '{}' | $FMT matches
 
-hr "4. Maria's plan rewrites itself  (FulfillmentWalker, in HER session)"
+hr "6. Maria's plan rewrites itself  (FulfillmentWalker, in HER session)"
 spawn "$MARIA" FulfillmentWalker '{}' | $FMT board
 
-hr "5. 48h pass with nothing for the shelter need  (FollowUpWalker)"
+hr "7. 48h pass with nothing for the shelter need  (FollowUpWalker)"
 spawn "$SAM" FollowUpWalker '{"simulate_hours":48}' | $FMT escalations
 
 hr "The shared log every walker wrote to"

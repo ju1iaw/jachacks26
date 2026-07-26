@@ -19,6 +19,33 @@ def board(payload):
         print("\n  anonymized onto the commons:")
         for n in b["needs"]:
             print("    %s  %s" % (n["code"], n["summary"]))
+    if b["answered"]:
+        print("\n  what she has been asked, and answered:")
+        for row in b["answered"]:
+            print("    %s" % row)
+
+
+def question(payload):
+    """The one thing the ReAct agent could not settle by reading the graph.
+
+    It rides on the strategy brief rather than standing alone because the agent
+    that surveyed the gates is the only thing that knows which gate hinges on the
+    answer -- and `question_why` naming that gate is what makes the question worth
+    putting to someone in a crisis.
+    """
+    b = payload["data"]["reports"][0]
+    asked = [s for s in b["strategy"] if s["open_question"]]
+    if not asked:
+        print("  no open question -- nothing the agent looked up hinged on")
+        print("  something she had not already told it")
+        return
+    for s in asked:
+        print("  Q: %s" % s["open_question"])
+        print("  because: %s" % s["question_why"])
+        if s["research_path"]:
+            print("\n  it earned the right to ask by reading the graph first:")
+            for call in s["research_path"]:
+                print("    %s" % call)
 
 
 def cards(payload):
@@ -33,13 +60,22 @@ def cards(payload):
 
 
 def matches(payload):
-    d = payload["data"]
-    for n in d["reports"]:
+    """Matched needs, read off the community board.
+
+    Matching is autonomous now, so there is no MatchWalker response to unwrap --
+    the walker ran nested inside PledgeWalker. Both halves of its judgement are
+    read back out of shared graph state instead: the matches off the needs, and
+    what it declined out of the activity feed it wrote them to.
+    """
+    v = payload["data"]["reports"][0]
+    hits = [n for n in v["needs"] if n["matched_with"]]
+    for n in hits:
         print("  MATCHED %s -> %s" % (n["code"], n["matched_with"]))
         print("          %s" % n["match_rationale"])
-    for note in d["result"].get("notes", []):
-        print("  PASSED  %s" % note)
-    if not d["reports"]:
+    for a in reversed(v["activity"]):
+        if a["walker"] == "MatchWalker" and ": passed on " in a["detail"]:
+            print("  PASSED  %s" % a["detail"])
+    if not hits:
         print("  nothing on the shelf fit any open need")
 
 
@@ -60,6 +96,7 @@ def activity(payload):
 
 MODES = {
     "board": board,
+    "question": question,
     "cards": cards,
     "matches": matches,
     "escalations": escalations,

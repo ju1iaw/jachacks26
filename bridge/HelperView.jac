@@ -67,7 +67,9 @@ def:pub HelperView(display_name: str) -> JsxElement {
                     <p className="muted small">
                         Every card below is a real, current need routed through a local
                         org. You will never see who it belongs to, and they will never
-                        know it was you.
+                        know it was you. Matching runs on its own -- put something on
+                        the shelf and Bridge weighs it against every need it can reach,
+                        right then.
                     </p>
                 </div>
                 <EngineBadge
@@ -84,8 +86,8 @@ def:pub HelperView(display_name: str) -> JsxElement {
                 <Stat n={fulfilled_count} k="fulfilled"/>
             </div>
             <div className="row" style={{"marginTop": "16px"}}>
-                <button className="btn cool" onClick={run_match} disabled={busy != ""}>
-                    {"Matching..." if busy == "match" else "Run MatchWalker"}
+                <button className="btn" onClick={run_match} disabled={busy != ""}>
+                    {"Sweeping..." if busy == "match" else "Re-sweep the commons"}
                 </button>
                 <button className="btn" onClick={run_followup} disabled={busy != ""}>
                     {"Escalating..." if busy == "follow" else "Simulate 48h with no help"}
@@ -125,7 +127,7 @@ def:pub HelperView(display_name: str) -> JsxElement {
 
                 <div className="section-title">
                     On the shelf
-                    <span className="hint">pledges route through the org, never person to person</span>
+                    <span className="hint">matched against reachable needs the moment they land</span>
                 </div>
                 <div className="grid">
                     {for (i, p) in enumerate(pledges) {

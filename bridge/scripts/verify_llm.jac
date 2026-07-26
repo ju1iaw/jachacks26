@@ -13,9 +13,8 @@ checked fact, not an assumption.
 import sys;
 import from core.commons { engine_report, ensure_commons, role_tally }
 import from core.reason {
-    ask_clarifying_safe, audit_anonymization_safe, escalation_strategy_safe,
-    judge_match_safe, judge_requirement_safe, next_step_nudge_safe,
-    read_situation_safe
+    audit_anonymization_safe, escalation_strategy_safe, judge_match_safe,
+    judge_requirement_safe, next_step_nudge_safe, read_situation_safe
 }
 import from core.agent { drain_tool_trace, plan_strategy_safe }
 
@@ -25,7 +24,6 @@ glob SITUATION: str = "I need food for me and my two kids this week. I lost my I
 glob EXPECTED_ROLES: list[str] = [
     "read_situation",
     "audit_anonymization",
-    "ask_clarifying",
     "judge_requirement",
     "judge_match",
     "escalation_strategy",
@@ -74,13 +72,7 @@ with entry:__main__ {
     print(f"leaks      : {audit.leaks}");
     print(f"repaired   : {audit.repaired_summary}");
 
-    head("3. ask_clarifying");
-    clar = ask_clarifying_safe(SITUATION, ", ".join(read.categories), ", ".join(read.assets));
-    print(f"needed     : {clar.needed}");
-    print(f"question   : {clar.question}");
-    print(f"why        : {clar.why}");
-
-    head("4. judge_requirement");
+    head("3. judge_requirement");
     verdict = judge_requirement_safe(
         SITUATION,
         ", ".join(read.assets) if read.assets else "nothing confirmed",
@@ -92,7 +84,7 @@ with entry:__main__ {
     print(f"reasoning  : {verdict.reasoning}");
     print(f"unblock    : {verdict.unblock_action}");
 
-    head("5. judge_match  (usability, not category)");
+    head("4. judge_match  (usability, not category)");
     bad = judge_match_safe(
         "Household of 3; no way to cook, no transport.", "food", 3,
         "food", "40lb of dry rice, beans and pasta", "Bulk staples, pickup only.", 8
@@ -107,7 +99,7 @@ with entry:__main__ {
         print("WARNING: the model preferred food this household cannot cook.");
     }
 
-    head("6. escalation_strategy");
+    head("5. escalation_strategy");
     plan = escalation_strategy_safe(
         "Household of 4 needs a place to stay; eviction already filed.",
         "shelter", "high", 48, 1, "ECS Navigation Center, Hamilton Families Shelter Access"
@@ -117,17 +109,18 @@ with entry:__main__ {
     print(f"2nd front  : {plan.also_try_category}");
     print(f"reasoning  : {plan.reasoning}");
 
-    head("7. next_step_nudge");
+    head("6. next_step_nudge");
     print(next_step_nudge_safe("groceries", "Eviction Defense Collaborative"));
 
-    head("8. plan_strategy  (ReAct agent with graph tools)");
+    head("7. plan_strategy  (ReAct agent with graph tools)");
     _ = drain_tool_trace();
     brief = plan_strategy_safe(
         SITUATION,
         ", ".join(read.categories),
         ", ".join(read.assets) if read.assets else "nothing confirmed",
         read.household,
-        read.zip_prefix
+        read.zip_prefix,
+        "nothing asked yet"
     );
     path = drain_tool_trace();
     print(f"headline     : {brief.headline}");
@@ -139,6 +132,8 @@ with entry:__main__ {
     print(f"community?   : {brief.rely_on_community}");
     print(f"risk         : {brief.risk}");
     print(f"note         : {brief.research_note}");
+    print(f"open question : {brief.open_question if brief.open_question else '(none -- nothing it looked up hinged on an unknown)'}");
+    print(f"  justified by: {brief.question_why if brief.question_why else '-'}");
     print("tool calls the agent CHOSE to make:");
     if path {
         for call in path {

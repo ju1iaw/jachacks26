@@ -2,7 +2,7 @@
 
 Every judgement Bridge makes about a human being is made by the model. There is
 no keyword table, no regex, no substitute answer anywhere in this file. There
-are **eight distinct LLM roles**, deliberately not one prompt reused eight
+are **seven distinct LLM roles**, deliberately not one prompt reused seven
 times:
 
   1. `read_situation`      -- free text -> structured facts + an anonymized
@@ -11,18 +11,16 @@ times:
                               leaks in role 1's output before it is published to
                               the commons. The privacy claim is enforced, not
                               asserted.
-  3. `ask_clarifying`      -- decides whether one missing fact would change the
-                              plan, and asks for exactly that.
-  4. `judge_requirement`   -- does this person's situation clear this org's
+  3. `judge_requirement`   -- does this person's situation clear this org's
                               specific eligibility gate, and if not, what single
                               action unblocks it.
-  5. `judge_match`         -- soft-matches a live need against a donor pledge on
+  4. `judge_match`         -- soft-matches a live need against a donor pledge on
                               *fit*, not category equality.
-  6. `plan_strategy`       -- the ReAct caseworker. Lives in `core/agent.jac`
+  5. `plan_strategy`       -- the ReAct caseworker. Lives in `core/agent.jac`
                               because its tools traverse the graph.
-  7. `escalation_strategy` -- when a need goes unanswered, reasons about *how*
+  6. `escalation_strategy` -- when a need goes unanswered, reasons about *how*
                               to widen the ask, not just how far.
-  8. `next_step_nudge`     -- the one line the person actually reads when their
+  7. `next_step_nudge`     -- the one line the person actually reads when their
                               plan changes underneath them.
 
 ## Engine honesty
@@ -310,29 +308,7 @@ sem audit_anonymization.proposed_summary = "The summary about to be shown public
 
 
 # ===========================================================================
-# Role 3 - the clarifying question
-# ===========================================================================
-
-obj Clarification {
-    has needed: bool;
-    has question: str;
-    has why: str;
-}
-
-sem Clarification = "A decision about whether one more fact is worth asking for before building a plan.";
-sem Clarification.needed = "True only if a single missing fact would materially change which organisations this person should be sent to. False if the plan is already actionable -- someone in crisis should not be interrogated.";
-sem Clarification.question = "The one question to ask, in plain warm second-person language, under 20 words. Empty when not needed.";
-sem Clarification.why = "One short sentence explaining what the answer would change about the plan. Empty when not needed.";
-
-def ask_clarifying(text: str, known_categories: str, known_assets: str) -> Clarification by llm(temperature=0.2);
-sem ask_clarifying = "Decide whether asking exactly one more question would materially improve this person's plan. Default to NOT asking -- only ask when the answer would change which orgs they are routed to.";
-sem ask_clarifying.text = "What the person said about their situation.";
-sem ask_clarifying.known_categories = "Categories of help already identified, comma-separated.";
-sem ask_clarifying.known_assets = "Documents and resources they already confirmed having, comma-separated.";
-
-
-# ===========================================================================
-# Role 4 - eligibility reasoning
+# Role 3 - eligibility reasoning
 # ===========================================================================
 
 obj EligibilityVerdict {
@@ -362,7 +338,7 @@ sem judge_requirement.workaround = "The known way to satisfy this requirement, i
 
 
 # ===========================================================================
-# Role 5 - soft matching (a genuinely different kind of reasoning)
+# Role 4 - soft matching (a genuinely different kind of reasoning)
 # ===========================================================================
 
 obj MatchVerdict {
@@ -398,7 +374,7 @@ sem judge_match.remaining_units = "Units of this pledge still unallocated. Alloc
 
 
 # ===========================================================================
-# Role 7 - escalation strategy  (role 6, the ReAct planner, is in core/agent.jac)
+# Role 6 - escalation strategy  (role 5, the ReAct planner, is in core/agent.jac)
 # ===========================================================================
 
 obj EscalationPlan {
@@ -432,7 +408,7 @@ sem escalation_strategy.orgs_already_reached = "Names of organisations already r
 
 
 # ===========================================================================
-# Role 8 - plan narration
+# Role 7 - plan narration
 # ===========================================================================
 
 def next_step_nudge(resolved: str, next_open_step: str) -> str by llm(temperature=0.5, max_tokens=120);
@@ -473,16 +449,6 @@ def audit_anonymization_safe(original_text: str, proposed_summary: str) -> LeakA
 }
 
 
-def ask_clarifying_safe(text: str, known_categories: str, known_assets: str) -> Clarification {
-    require_engine("ask_clarifying");
-    try {
-        _note("ask_clarifying");
-        return ask_clarifying(text, known_categories, known_assets);
-    } except Exception as e {
-        _note_failure("ask_clarifying", str(e));
-        raise;
-    }
-}
 
 
 def judge_requirement_safe(

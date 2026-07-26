@@ -1,8 +1,12 @@
 """Bridge - an agentic crisis navigator that quietly connects people who need
 help to people who want to give it.
 
-Server endpoints register by being named in the import list below. The client
-half is the `cl` block at the bottom.
+Server endpoints register by being named in the import list below, so that list
+is the app's public API surface and nothing more. `EligibilityPathWalker`,
+`NeedBroadcastWalker` and `StrategyWalker` are deliberately absent: they are
+interior stages of the intake pipeline, spawned by the walkers that need them,
+and exposing them as callable endpoints would have published three entry points
+no client has any reason to hit.
 
     jac start --dev main.jac        # http://localhost:8000
 """
@@ -13,8 +17,8 @@ import from core.graph {
     PledgeCard, SeekerBoard, StrategyView, WalkerTrace
 }
 import from core.walkers {
-    CommunityBoard, EligibilityPathWalker, FollowUpWalker, FulfillmentWalker,
-    IntakeWalker, MatchWalker, NeedBroadcastWalker, PledgeWalker, StrategyWalker
+    AnswerWalker, CommunityBoard, FollowUpWalker, FulfillmentWalker,
+    IntakeWalker, MatchWalker, PledgeWalker
 }
 import from core.reason { ensure_engine }
 

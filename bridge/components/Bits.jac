@@ -211,6 +211,76 @@ def:pub StrategyCard(brief: StrategyView) -> JsxElement {
 }
 
 
+"""The one question the caseworker agent could not answer from what it was told.
+
+`why` is the load-bearing part: it names the organisation and requirement that
+hinge on the answer and says what changes either way, so this reads as a decision
+worth 5 seconds rather than a form field. Answering re-runs the whole pipeline.
+"""
+def:pub OpenQuestion(
+    question: str,
+    why: str,
+    answer: str,
+    busy: bool,
+    on_answer: Callable[[str], None],
+    on_change: Callable[[str], None]
+) -> JsxElement {
+    return <div className="card" style={{"borderColor": "var(--cool)"}}>
+        <div className="eyebrow">One thing would change your plan</div>
+        <p style={{"fontSize": "16px", "margin": "10px 0 8px", "fontWeight": "600"}}>{question}</p>
+        {if why {
+            <div className="why" key="w">{why}</div>
+        }}
+        <div className="row" style={{"marginTop": "14px", "gap": "8px"}}>
+            <button
+                className="btn primary sm"
+                onClick={lambda { on_answer("yes"); }}
+                disabled={busy}
+            >Yes</button>
+            <button
+                className="btn sm"
+                onClick={lambda { on_answer("no"); }}
+                disabled={busy}
+            >No</button>
+            <span className="small muted">or say more:</span>
+        </div>
+        <div className="row" style={{"marginTop": "8px", "gap": "8px"}}>
+            <input
+                className="field"
+                value={answer}
+                placeholder="I have a shelter letter but no ID"
+                disabled={busy}
+                onChange={lambda (e: ChangeEvent) { on_change(e.target.value); }}
+            />
+            <button
+                className="btn cool sm"
+                onClick={lambda { on_answer(answer); }}
+                disabled={busy or not answer}
+            >{"Re-planning..." if busy else "Send"}</button>
+        </div>
+        <p className="small muted" style={{"marginTop": "10px"}}>
+            Answering re-checks every requirement and re-orders your plan - it does
+            not just record the answer.
+        </p>
+    </div>;
+}
+
+
+def:pub AnsweredTrail(rows: list[str]) -> JsxElement {
+    return <div className="card">
+        <div className="eyebrow" style={{"marginBottom": "10px"}}>What you have told us</div>
+        <div className="feed">
+            {for (i, row) in enumerate(rows) {
+                <div className="feed-item" key={str(i)}>
+                    <div className="feed-rail"><span></span></div>
+                    <div className="feed-d">{row}</div>
+                </div>
+            }}
+        </div>
+    </div>;
+}
+
+
 """What the auditor stripped before anything was published.
 
 The claim "no identity crosses the boundary" is worth very little as a sentence

@@ -48,14 +48,23 @@ impl HelperView.add_pledge -> None {
         units = 1;
     }
     try {
-        _ = await root spawn PledgeWalker(
+        # PledgeWalker wakes the matcher itself, so by the time this returns the
+        # matching has already happened -- `matched_now` is what it did, read off
+        # the walker rather than out of `reports` (a nested spawn's reports go to
+        # the outer stream, so MatchWalker runs with emit=False in there).
+        result = await root spawn PledgeWalker(
             kind=kind,
             description=description,
             capacity=units,
             org_id=org_id,
             notes=notes
         );
-        flash = "On the shelf. Run the matcher when you're ready.";
+        hit = result.matched_now;
+        flash = (
+            "On the shelf - and it already matched " + str(hit) + " open need(s)."
+            if hit > 0
+            else "On the shelf. Nothing open fits it right now; it'll be reconsidered the moment something does."
+        );
         description = "";
         notes = "";
     } except Exception as e {
@@ -66,15 +75,23 @@ impl HelperView.add_pledge -> None {
 }
 
 
+"""A manual full sweep of the commons.
+
+Matching is autonomous -- needs and pledges each wake the matcher as they land,
+so this button is a backstop, not the mechanism. It exists for the case where a
+match attempt was lost to a provider blip (those are logged in the feed and the
+need stays open), and for re-checking every open need at once after the shelf
+has changed. On a healthy graph it should find nothing left to do.
+"""
 impl HelperView.run_match -> None {
     busy = "match";
     try {
         result = await root spawn MatchWalker();
         made = len(result.reports) if result.reports else 0;
         flash = (
-            "Matched " + str(made) + " need(s)."
+            "Swept the commons - matched " + str(made) + " need(s) the triggers had missed."
             if made > 0
-            else "Walked every open need - nothing on the shelf fits any of them."
+            else "Swept every open need - nothing left for it to do."
         );
     } except Exception as e {
         flash = clean_error("Matcher failed.", str(e));

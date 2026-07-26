@@ -23,8 +23,8 @@ persists between calls, and stays clean -- that is the path the demo runs on.
 import sys;
 import from core.commons { choose_role, ensure_commons, engine_report }
 import from core.walkers {
-    CommunityBoard, EligibilityPathWalker, FollowUpWalker, FulfillmentWalker,
-    IntakeWalker, MatchWalker, NeedBroadcastWalker, PledgeWalker, StrategyWalker
+    AnswerWalker, CommunityBoard, FollowUpWalker, FulfillmentWalker,
+    IntakeWalker, MatchWalker, PledgeWalker
 }
 
 
@@ -78,9 +78,11 @@ with entry:__main__ {
     } else {
         print("privacy auditor: no identity leaks in the published summary");
     }
-    if board.clarify_question {
-        print(f"clarifying question: {board.clarify_question}");
-        print(f"               why: {board.clarify_why}");
+    if board.answered {
+        print("already answered:");
+        for row in board.answered {
+            print(f"  - {row}");
+        }
     }
 
     line("StrategyWalker (the ReAct caseworker)");
@@ -94,6 +96,10 @@ with entry:__main__ {
         print(f"community?  : {brief.rely_on_community}");
         print(f"risk        : {brief.risk}");
         print(f"note        : {brief.research_note}");
+        print(f"open question: {brief.open_question if brief.open_question else '(none)'}");
+        if brief.question_why {
+            print(f"  because   : {brief.question_why}");
+        }
         print("research path the agent CHOSE to take:");
         if brief.research_path {
             for call in brief.research_path {
@@ -104,9 +110,62 @@ with entry:__main__ {
         }
     }
 
-    line("PledgeWalker (the volunteer side)");
-    cb = root spawn CommunityBoard();
-    orgs = cb.reports[0].orgs;
+    line("AnswerWalker (answering the agent's question re-plans everything)");
+    # The question is only worth asking if the answer moves the plan, so this
+    # prints the plan on both sides of it. Answering does not tick a box: the
+    # answer goes back into the person's own words and the whole chain -- intake,
+    # every gate, the broadcast, the agent -- runs again on the enriched story.
+    question = "";
+    for brief in board.strategy {
+        if brief.open_question {
+            question = brief.open_question;
+        }
+    }
+    if question {
+        # Deliberately a plain "no" rather than an answer tailored to the exact
+        # wording: the agent picks the question from whatever its research turned
+        # up, so a canned reply here cannot presume which gate it landed on. Every
+        # question it is allowed to ask is answerable this way.
+        reply = "No -- I lost everything when we left, so I don't have that.";
+        print(f"agent asked : {question}");
+        print(f"answering   : {reply}");
+        replan = root spawn AnswerWalker(answer=reply, question=question);
+        board = replan.reports[0];
+
+        print("");
+        print("the plan, re-reasoned against that answer:");
+        for step in board.steps {
+            print(f"  [{step.status:9}] {step.title}");
+        }
+        print("what this person has told us, kept on the graph:");
+        for row in board.answered {
+            print(f"  - {row}");
+        }
+        for brief in board.strategy {
+            print(f"fresh first action: {brief.first_action}");
+            print(
+                "asks again        : "
+                + (brief.open_question if brief.open_question
+                   else "(no -- the answered trail closed that line of questioning)")
+            );
+        }
+    } else {
+        print("the agent had no open question this time -- nothing its research");
+        print("turned up hinged on something Maria had not already said.");
+    }
+
+    line("Matching without anyone asking for it");
+    # Intake already published the needs -- and NeedBroadcastWalker woke the
+    # matcher on each one as it landed. Whatever the seed pledges could cover is
+    # therefore already matched, before the volunteer side has done anything.
+    mid = root spawn CommunityBoard();
+    print("after intake alone, with nobody having clicked anything:");
+    for card in mid.reports[0].needs {
+        print(f"  {card.code} {card.status:9} {card.matched_with if card.matched_with else '-'}");
+    }
+
+    line("PledgeWalker (the volunteer side) -- matches on arrival");
+    orgs = mid.reports[0].orgs;
     pantry = [o for o in orgs if o.name == "Bayview Free Pantry"];
     pledged = root spawn PledgeWalker(
         kind="food",
@@ -116,10 +175,12 @@ with entry:__main__ {
         notes="I can drop these at the pantry or deliver."
     );
     print("pledge id:", pledged.reports[0]);
+    print(f"matched on arrival: {pledged.matched_now} need(s) {pledged.matched_codes}");
 
-    line("MatchWalker");
+    line("MatchWalker (manual sweep -- the backstop, not the mechanism)");
     matcher = root spawn MatchWalker();
     print(f"considered {matcher.considered} pairs, matched {matcher.matched}");
+    print("(0 matched here is the CORRECT result -- the triggers already did it)");
     for note in matcher.notes {
         print("  passed:", note);
     }
@@ -136,9 +197,20 @@ with entry:__main__ {
         print(f"  [{step.status:9}] {step.title}");
     }
 
+    # Covering a category invalidates the brief the agent wrote when that
+    # category was still open, so settling the match wakes the caseworker again.
+    # Nobody asked for a re-plan: the graph event that made the old brief wrong
+    # is the thing that ran the new one.
+    print(f"caseworker re-planned on it: {fulfil.restrategized}");
+    for brief in after.strategy {
+        print(f"  fresh first action: {brief.first_action}");
+        print(f"  reasoned over     : {len(brief.research_path)} graph lookup(s), post-fulfillment");
+    }
+
     line("FollowUpWalker (48h later, nothing came back)");
     follow = root spawn FollowUpWalker(simulate_hours=48);
     print(f"escalated {follow.escalated} need(s), +{follow.fanout} org(s)");
+    print(f"re-matched after the radius widened: {follow.rematched}");
     for card in follow.reports {
         print(f"  {card.code} tier={card.broadcast_tier} escalations={card.escalations} urgency={card.urgency}");
     }

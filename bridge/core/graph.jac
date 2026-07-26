@@ -61,11 +61,20 @@ node Person {
     # the demo can show the repair actually happening rather than claim it.
     has anon_audited: bool = False;
     has anon_leaks: list[str] = [];
+}
 
-    # Set by the clarifying-question role. Non-empty means the agent decided one
-    # missing fact would change the plan and is asking for it.
-    has clarify_question: str = "";
-    has clarify_why: str = "";
+
+node AnsweredQuestion {
+    """One question the caseworker agent asked, and what the person said back.
+
+    Kept on the graph rather than folded away for two reasons: the agent is handed
+    the list so it never asks the same thing twice, and the pair is the audit
+    trail for *why* a plan changed between two versions.
+    """
+
+    has question: str;
+    has answer: str;
+    has at: str = "";
 }
 
 
@@ -85,6 +94,15 @@ node CaseStrategy {
     has risk: str = "";
     has research_note: str = "";
     has research_path: list[str] = [];
+
+    # The one thing the agent still wants to know. Non-empty only when the answer
+    # would change which orgs this person is sent to, judged against requirements
+    # the agent actually looked up -- `question_why` names the gate that hinges on
+    # it. This replaced a standalone `ask_clarifying` role that had no access to
+    # the org graph and therefore never found a reason to ask anything.
+    has open_question: str = "";
+    has question_why: str = "";
+
     has engine: str = "unknown";
     has at: str = "";
 }
@@ -223,6 +241,8 @@ edge HasNeed: Person --> Need {}
 
 edge HasStrategy: Person --> CaseStrategy {}
 
+edge HasAnswer: Person --> AnsweredQuestion {}
+
 edge Requires: Org --> Requirement {}
 
 edge BroadcastTo: Need --> Org {
@@ -318,6 +338,8 @@ obj StrategyView {
     has risk: str = "";
     has research_note: str = "";
     has research_path: list[str] = [];
+    has open_question: str = "";
+    has question_why: str = "";
     has engine: str = "";
     has at: str = "";
 }
@@ -388,9 +410,10 @@ obj SeekerBoard {
     # with the same map() it uses for every other collection.
     has strategy: list[StrategyView] = [];
 
-    # Non-empty when the clarifying-question role decided one more fact matters.
-    has clarify_question: str = "";
-    has clarify_why: str = "";
+    # "question -> answer" for every question already answered, oldest first.
+    # The live question itself rides on `strategy[0].open_question`, next to the
+    # research that justifies it.
+    has answered: list[str] = [];
 
     # What the privacy auditor caught and repaired before publishing.
     has privacy_leaks: list[str] = [];

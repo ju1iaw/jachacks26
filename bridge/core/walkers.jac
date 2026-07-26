@@ -1,7 +1,8 @@
 """Bridge - the walkers.
 
-Seven walkers, distinct jobs, no direct calls between most of them. They
-coordinate by reading and writing the same graph:
+Eight walkers, distinct jobs. Where one starts another it is because a graph
+event demands it, never because a human clicked; otherwise they coordinate
+purely by reading and writing the same graph:
 
     IntakeWalker          person's words  ->  Person node. Runs the intake read,
       |                   then a second adversarial pass that audits the
@@ -12,22 +13,46 @@ coordinate by reading and writing the same graph:
       |                           get an unblock step in front of them)
       |
       +-- NeedBroadcastWalker     turns every still-unmet category into an
-      |                           anonymized Need on the commons and wires it
-      |                           to nearby orgs. The topology IS the message.
+      |                           anonymized Need on the commons, wires it to
+      |                           nearby orgs, and wakes the matcher on it. The
+      |                           topology IS the message.
       |
       +-- StrategyWalker          hands the situation to a ReAct agent holding
                                   four graph-reading tools and stores both the
                                   strategy it returns and the research path it
-                                  chose to get there.
+                                  chose to get there -- plus the one question its
+                                  research could not answer from what it was told.
 
-    MatchWalker           runs in a *different user's session* (the helper's).
-                          Walks open Needs, soft-matches donor pledges, writes
-                          a Matched edge and decrements the pledge.
+    AnswerWalker          records the answer to that question and re-runs the
+                          whole chain over the enriched story, so a single "no, I
+                          don't have ID" re-judges every gate and re-orders the
+                          plan. The agent is handed the Q&A so it never asks
+                          twice.
+
+    MatchWalker           soft-matches open Needs against donor pledges, writes
+                          a Matched edge and decrements the pledge. Nobody
+                          schedules it and nobody clicks it: it is woken by the
+                          three graph events that can change what a need can
+                          reach --
+
+                            NeedBroadcastWalker  a need lands on the commons
+                            PledgeWalker         a pledge lands on the shelf
+                            FollowUpWalker       escalation widens the radius
+
+                          -- so whichever half of a match arrives second sets it
+                          off, in whichever session that happened to be. It runs
+                          the same either way: from a Need the only way out is
+                          `BroadcastTo -> Org` and from an Org the only way to a
+                          pledge is back down `RoutedThrough`, so there is no
+                          session in which it can reach a Person.
 
     FulfillmentWalker     runs back in the seeker's session on their next poll.
                           Sees the Matched edge that appeared, rewrites the
                           plan, writes the nudge. Neither walker called the
-                          other -- they only ever touched the same graph.
+                          other -- they only ever touched the same graph. Then
+                          it wakes StrategyWalker, because a brief reasoned over
+                          an open category is wrong the moment that category is
+                          covered.
 
     FollowUpWalker        ages open Needs, asks the model *how* to escalate, and
                           acts on the answer -- widening the radius, rewording
@@ -37,10 +62,10 @@ coordinate by reading and writing the same graph:
 """
 
 import from core.graph {
-    Activity, CaseStrategy, Contribution, Donor, Need, NeedCard, Org, Person,
-    PlanStep, Requirement, SeekerBoard, CommunityView, StrategyView,
-    BroadcastTo, HasNeed, HasStep, HasStrategy, Matched, Pledges, Requires,
-    RoutedThrough,
+    Activity, AnsweredQuestion, CaseStrategy, Contribution, Donor, Need, NeedCard,
+    Org, Person, PlanStep, Requirement, SeekerBoard, CommunityView, StrategyView,
+    BroadcastTo, HasAnswer, HasNeed, HasStep, HasStrategy, Matched, Pledges,
+    Requires, RoutedThrough,
     age_hours, age_label, need_code, now_iso, rewind
 }
 import from core.commons {
@@ -48,10 +73,9 @@ import from core.commons {
     orgs_for, pledge_cards, recent_activity, _my_account
 }
 import from core.reason {
-    EligibilityVerdict, MatchVerdict,
-    ask_clarifying_safe, audit_anonymization_safe, engine,
-    escalation_strategy_safe, launch_match, launch_requirement,
-    next_step_nudge_safe, read_situation_safe, require_engine
+    EligibilityVerdict, LeakAudit, MatchVerdict,
+    audit_anonymization_safe, engine, escalation_strategy_safe, launch_match,
+    launch_requirement, next_step_nudge_safe, read_situation_safe, require_engine
 }
 import from core.agent { drain_tool_trace, plan_strategy_safe }
 
@@ -112,9 +136,21 @@ def strategy_view(cs: CaseStrategy) -> StrategyView {
         risk=cs.risk,
         research_note=cs.research_note,
         research_path=cs.research_path,
+        open_question=cs.open_question,
+        question_why=cs.question_why,
         engine=cs.engine,
         at=cs.at
     );
+}
+
+
+"""Every question already put to this person, oldest first, as "Q -> A"."""
+def answered_trail(person: Person) -> list[str] {
+    rows = sorted(
+        [person ->:HasAnswer:->],
+        key=lambda (a: AnsweredQuestion) -> str { return a.at; }
+    );
+    return [f"{a.question} -> {a.answer}" for a in rows];
 }
 
 
@@ -133,8 +169,7 @@ def build_board(person: Person) -> SeekerBoard {
         engine=rep.mode,
         has_plan=len(steps) > 0,
         strategy=[strategy_view(s) for s in [person ->:HasStrategy:->]],
-        clarify_question=person.clarify_question,
-        clarify_why=person.clarify_why,
+        answered=answered_trail(person),
         privacy_leaks=person.anon_leaks,
         engine_model=rep.model,
         engine_reason=rep.reason,
@@ -302,13 +337,20 @@ walker:protect NeedBroadcastWalker {
 
     Note what does NOT happen here: no notification is sent, no queue is
     published, nothing is pushed. The walker attaches `BroadcastTo` edges and
-    stops. The graph topology is the message bus -- the helper's MatchWalker
-    finds the need by traversing, in a completely separate request.
+    then wakes the matcher *itself*. The need landing on the commons is the
+    trigger -- no human is in the loop, and no scheduler is either.
+
+    Running the matcher from the seeker's own session is safe for the same
+    structural reason the whole app is: `MatchWalker` can only traverse
+    `Need -> Org -> Contribution`, and there is no edge from any of those back
+    to a `Person`. Reachability is what enforces the boundary, not whose session
+    the walker happens to be running in.
     """
 
     has person_jid: str;
     has created: int = 0;
     has fanout: int = 0;
+    has matched_now: int = 0;
     has opened: list[NeedCard] = [];
     has reports: list[NeedCard] = [];
 
@@ -334,6 +376,7 @@ walker:protect NeedBroadcastWalker {
             }
         }
 
+        fresh: list[Need] = [];
         for category in unmet {
             if category in live {
                 continue;
@@ -348,8 +391,9 @@ walker:protect NeedBroadcastWalker {
                 created_at=now_iso()
             );
             need.code = need_code(jid(need));
-            # WritePerm: the helper's MatchWalker has to flip `status` and the
-            # FollowUpWalker has to bump `escalations` from other sessions.
+            # WritePerm: the matcher has to flip `status` and the FollowUpWalker
+            # has to bump `escalations`, and either can be woken from a session
+            # other than this one -- a helper's pledge, or a later escalation.
             grant(need, level=WritePerm);
             person +>:HasNeed:+> need;
             self.created += 1;
@@ -358,13 +402,45 @@ walker:protect NeedBroadcastWalker {
                 need +>:BroadcastTo(tier=1):+> org;
                 self.fanout += 1;
             }
-            self.opened.append(need_card(need));
+            fresh.append(need);
         }
 
         if self.created > 0 {
             log_walker(
                 "NeedBroadcastWalker",
                 f"opened {self.created} anonymized need(s), wired to {self.fanout} local org(s) -- no identity crossed"
+            );
+            self.try_match([n.code for n in fresh]);
+        }
+
+        # Built AFTER the match attempt so the cards carry whatever status the
+        # matcher just left on them, rather than a stale "open".
+        self.opened = [need_card(n) for n in fresh];
+    }
+
+    """Wake the matcher on the needs that just landed. Never fatal.
+
+    The eligibility plan is the promise this walker's caller is keeping; a
+    matcher that cannot run (no engine, a provider blip) must cost the person a
+    match attempt, not their plan. So it is logged honestly and swallowed --
+    the need stays `open`, and the next trigger or the manual sweep retries it.
+    """
+    def try_match(codes: list[str]) {
+        if not codes {
+            return;
+        }
+        try {
+            matcher = MatchWalker(
+                only_codes=codes,
+                emit=False,
+                woke_on=f"{len(codes)} new need(s) landed on the commons"
+            );
+            root spawn matcher;
+            self.matched_now = matcher.matched;
+        } except Exception as e {
+            log_walker(
+                "engine",
+                f"needs published, but the match they triggered could not run: {str(e)}"
             );
         }
     }
@@ -382,17 +458,25 @@ walker:protect StrategyWalker {
     situation to an agent holding four graph-reading tools and lets the agent
     choose what to investigate. What comes back is stored together with the tool
     trace, so the plan and the research behind it can be audited side by side.
+
+    It is not an endpoint and there is no button for it. Two graph events run it,
+    both of which mean "the facts this brief was reasoned over have changed":
+
+        IntakeWalker        the person's story is new, or was just re-described
+        FulfillmentWalker   a need got covered, so a category the agent planned
+                            around is no longer open and the shelf it read has
+                            been drawn down
+
+    `AnswerWalker` is the third path only because it re-runs intake -- the answer
+    becomes part of the story rather than a separate trigger.
     """
 
     has person_jid: str;
 
-    # A nested spawn's reports flow into the OUTER walker's response stream, not
-    # its own -- so `IntakeWalker` spawns this with `emit=False` and reads the
-    # brief off `self.brief` instead. Left True when called directly as an
-    # endpoint, where the caller does want it in `.reports`.
-    has emit: bool = True;
+    # No `report` and no `reports`: every caller spawns this from inside another
+    # walker, and a nested spawn's reports flow into the OUTER walker's response
+    # stream rather than its own. Callers read the brief off `self.brief`.
     has brief: list[StrategyView] = [];
-    has reports: list[StrategyView] = [];
 
     can plan with Root entry {
         person = jobj(self.person_jid);
@@ -401,21 +485,28 @@ walker:protect StrategyWalker {
         }
         require_engine("plan_strategy");
 
-        # Re-describing your situation re-plans from scratch, same as the steps.
-        for stale in [person ->:HasStrategy:->] {
-            del stale;
-        }
-
+        # The answered trail goes in so the agent never re-asks a question this
+        # person has already sat through, and treats past answers as fact.
+        prior = answered_trail(person);
         brief = plan_strategy_safe(
             person.situation,
             ", ".join(person.categories),
             ", ".join(person.assets) if person.assets else "nothing confirmed",
             person.household,
-            person.zip_prefix
+            person.zip_prefix,
+            "\n".join(prior) if prior else "nothing asked yet"
         );
 
         # The agent's own research path -- which graph reads it chose, in order.
         path = drain_tool_trace();
+
+        # The previous brief is retired only now that a replacement exists. Doing
+        # it up front is the obvious way to write this and it is wrong: the ReAct
+        # loop can fail mid-tool-call, and on a re-plan that would leave the
+        # person staring at no brief at all rather than at a slightly old one.
+        for stale in [person ->:HasStrategy:->] {
+            del stale;
+        }
 
         saved = person +>:HasStrategy:+> CaseStrategy(
             headline=brief.headline,
@@ -425,6 +516,8 @@ walker:protect StrategyWalker {
             risk=brief.risk,
             research_note=brief.research_note,
             research_path=path,
+            open_question=brief.open_question,
+            question_why=brief.question_why,
             engine=engine(),
             at=now_iso()
         );
@@ -437,13 +530,15 @@ walker:protect StrategyWalker {
         for line in path {
             log_walker("agent-tool", line);
         }
+        if brief.open_question {
+            log_walker(
+                "StrategyWalker",
+                f"its research left one thing unresolved, asking: \"{brief.open_question}\""
+            );
+        }
 
         flush_engine_log();
-        view = strategy_view(saved);
-        self.brief.append(view);
-        if self.emit {
-            report view;
-        }
+        self.brief.append(strategy_view(saved));
     }
 }
 
@@ -453,10 +548,22 @@ walker:protect StrategyWalker {
 # ===========================================================================
 
 walker:protect IntakeWalker {
-    """Read the person's words, then hand off to the other two by spawning them."""
+    """Read the person's words, then hand off to the other three by spawning them."""
 
     has situation: str;
     has alias: str = "";
+
+    # True only when `AnswerWalker` is driving: the enriched story it passes in
+    # already contains the answer it just recorded, so the trail must survive.
+    # A person re-describing by hand is doing the opposite -- restating their
+    # situation is how they correct an answer they gave earlier -- so the default
+    # is to clear it and let the agent ask again against the new facts.
+    has keep_answers: bool = False;
+
+    # Same nested-spawn rule as StrategyWalker: a nested walker's reports land in
+    # the OUTER walker's stream, so `AnswerWalker` drives this with emit=False and
+    # builds its own board afterwards.
+    has emit: bool = True;
     has reports: list[SeekerBoard] = [];
 
     can start with Root entry {
@@ -466,43 +573,49 @@ walker:protect IntakeWalker {
 
         read = read_situation_safe(self.situation);
 
-        # Everything downstream needs `read`, but the audit and the clarifying
-        # question do not need *each other* -- so they go out together, and the
-        # graph work below (minting the Person, retiring stale needs) happens
-        # while both are still in flight.
+        # The audit goes out now and is collected below, so finding or minting the
+        # Person happens while the model call is in flight rather than behind it.
         #
         # Inline `flow` is safe here where the `launch_*` wrappers in
         # core/reason.jac are required elsewhere: the trap those wrappers exist to
         # avoid is a comprehension capturing its loop variable by reference, and
-        # these are two distinct calls with no loop. Neither role touches the
-        # graph, which is why this is parallelisable at all -- concurrent graph
-        # writes are what trip the runtime's optimistic-concurrency check.
-        pending_audit = flow audit_anonymization_safe(self.situation, read.anonymized_summary);
-        pending_clarify = flow ask_clarifying_safe(
-            self.situation,
-            ", ".join(read.categories),
-            ", ".join(read.assets) if read.assets else "nothing confirmed"
-        );
+        # this is a single call with no loop. The role touches no graph state,
+        # which is what makes it safe to overlap at all -- concurrent graph writes
+        # are what trip the runtime's optimistic-concurrency check.
+        # Pull the string out first: only plain values cross a `flow` boundary, and
+        # handing the whole `SituationRead` obj over fails with E1308.
+        proposed = read.anonymized_summary;
+        pending_audit = flow audit_anonymization_safe(self.situation, proposed);
 
         person = _my_person();
         if person is None {
             person = root ++> Person(alias=name, situation=self.situation, created_at=now_iso());
-        } else {
-            # Re-describing your situation re-plans from scratch: retire the old
-            # needs so the commons never shows two live asks for the same thing.
-            # (EligibilityPathWalker does the same for the old plan steps.)
-            for stale in [person ->:HasNeed:->] {
-                del stale;
+        }
+
+        # The audit is a SECOND model pass over the first one's anonymization, and
+        # nothing reaches the commons until it has run: the privacy claim is a
+        # checked invariant, not a promise, so whatever the auditor repairs is what
+        # gets published, and what it caught is kept for the record.
+        #
+        # Everything that retires old state waits until after this resolves. The
+        # audit can fail mid-flight on a provider blip, and a failure here must
+        # leave the person the plan they already had rather than a half-wiped one
+        # -- same rule EligibilityPathWalker follows before it clears the steps.
+        audit = (wait pending_audit) as LeakAudit;
+        published = audit.repaired_summary if audit.repaired_summary else read.anonymized_summary;
+
+        # Re-describing re-plans from scratch: retire the old needs so the commons
+        # never shows two live asks for the same household. (EligibilityPathWalker
+        # and StrategyWalker do the same for the old steps and the old brief.)
+        for stale in [person ->:HasNeed:->] {
+            self.release_pledge(stale);
+            del stale;
+        }
+        if not self.keep_answers {
+            for prior in [person ->:HasAnswer:->] {
+                del prior;
             }
         }
-        # Collect the two in-flight roles. The audit is a SECOND model pass over
-        # the first one's anonymization, and nothing reaches the commons until it
-        # has run: the privacy claim is a checked invariant, not a promise, so
-        # whatever the auditor repairs is what gets published, and what it caught
-        # is kept for the record.
-        audit = wait pending_audit;
-        clar = wait pending_clarify;
-        published = audit.repaired_summary if audit.repaired_summary else read.anonymized_summary;
 
         person.alias = name;
         person.situation = self.situation;
@@ -516,8 +629,6 @@ walker:protect IntakeWalker {
         person.last_nudge = "";
         person.anon_audited = True;
         person.anon_leaks = audit.leaks;
-        person.clarify_question = clar.question if clar.needed else "";
-        person.clarify_why = clar.why if clar.needed else "";
 
         log_walker(
             "IntakeWalker",
@@ -530,9 +641,6 @@ walker:protect IntakeWalker {
             );
         } else {
             log_walker("PrivacyAuditor", "audited the public summary -- no identity leaks found");
-        }
-        if clar.needed {
-            log_walker("IntakeWalker", f"one fact would change the plan, asking: \"{clar.question}\"");
         }
 
         # The eligibility plan and the broadcast are the core promise -- if the
@@ -549,20 +657,117 @@ walker:protect IntakeWalker {
         # errors mid-tool-call) should not cost the person the eligibility plan
         # they already have; it is logged honestly instead of shown at all.
         try {
-            strategist = StrategyWalker(person_jid=jid(person), emit=False);
+            strategist = StrategyWalker(person_jid=jid(person));
             root spawn strategist;
         } except Exception as e {
             log_walker("engine", f"caseworker agent failed, no brief this time: {str(e)}");
         }
 
         flush_engine_log();
-        report build_board(person);
+        if self.emit {
+            report build_board(person);
+        }
+    }
+
+    """Give a retired need's units back to the donor who was holding them.
+
+    A matched need has already taken `units` off a `Contribution`. Deleting it
+    takes the `Matched` edge with it but leaves `remaining` decremented, so
+    without this the shelf drains a little on every re-describe and eventually
+    the matcher reports that nothing fits against pledges nobody ever used.
+    """
+    def release_pledge(stale: Need) -> None {
+        units = 0;
+        for e in [edge stale ->:Matched:->] {
+            units = e.units;
+        }
+        if units <= 0 {
+            return;
+        }
+        for pledge in [stale ->:Matched:->] {
+            pledge.remaining = min(pledge.capacity, pledge.remaining + units);
+            log_walker(
+                "IntakeWalker",
+                f"retired {stale.code} and returned {units} unit(s) to \"{pledge.description}\" -- {pledge.remaining} available again"
+            );
+        }
     }
 }
 
 
 # ===========================================================================
-# 5. MatchWalker  (runs as the helper, never sees a Person)
+# 5. AnswerWalker  (the loop that makes the question worth asking)
+# ===========================================================================
+
+walker:protect AnswerWalker {
+    """Take the answer to the agent's open question and re-plan on top of it.
+
+    This is what makes the question more than decoration. The answer is recorded
+    as a node, folded into the person's own narrative, and then the *entire*
+    pipeline runs again over the enriched story: intake re-reads it, every
+    eligibility gate is re-judged against the new fact, needs are rebuilt, and the
+    agent produces a fresh strategy that is handed the Q&A so it cannot ask twice.
+
+    So answering "no, I don't have a photo ID" does not tick a box -- it demotes
+    every org that demands one and promotes the no-barrier pantry, because those
+    were always conclusions about the graph rather than stored answers.
+    """
+
+    has answer: str;
+    has question: str = "";
+    has reports: list[SeekerBoard] = [];
+
+    can apply with Root entry {
+        person = _my_person();
+        if person is None {
+            disengage;
+        }
+        clean = self.answer.strip();
+        if not clean {
+            report build_board(person);
+            disengage;
+        }
+
+        # Prefer the question the agent actually stored over whatever the client
+        # echoed back, so the record cannot drift from what was really asked.
+        asked = self.question;
+        for cs in [person ->:HasStrategy:->] {
+            if cs.open_question {
+                asked = cs.open_question;
+            }
+        }
+        if not asked {
+            asked = "(unprompted detail)";
+        }
+
+        person +>:HasAnswer:+> AnsweredQuestion(
+            question=asked,
+            answer=clean,
+            at=now_iso()
+        );
+        log_walker("AnswerWalker", f"answered \"{asked}\" -> \"{clean}\"; re-planning from scratch");
+
+        # Fold it into the narrative rather than patching `assets` by hand: the
+        # intake role already knows how to turn prose into structured facts, so the
+        # answer flows through the same path as everything the person volunteered.
+        enriched = f"{person.situation} In answer to \"{asked}\": {clean}.";
+
+        replan = IntakeWalker(
+            situation=enriched, alias=person.alias, emit=False, keep_answers=True
+        );
+        root spawn replan;
+
+        fresh = _my_person();
+        flush_engine_log();
+        if fresh is not None {
+            report build_board(fresh);
+        }
+    }
+}
+
+
+# ===========================================================================
+# 6. MatchWalker  (runs in whichever session woke it, never sees a Person)
 # ===========================================================================
 
 walker:protect MatchWalker {
@@ -575,14 +780,58 @@ walker:protect MatchWalker {
     """
 
     has only_code: str = "";
+
+    # Set when something *else* woke this walker: the codes that just changed,
+    # or the pledge that just appeared. Empty means a full sweep of the commons.
+    has only_codes: list[str] = [];
+    has from_pledge: str = "";
+
+    # Non-empty when this run was triggered by a graph event rather than a
+    # person. It is the sentence written into the activity feed, so the demo can
+    # show *what* woke the matcher, not just that it ran.
+    has woke_on: str = "";
+
+    # Same trap StrategyWalker documents: a nested spawn's reports land in the
+    # OUTER walker's response stream. Every autonomous trigger sets this False
+    # and reads `self.cards` / `self.matched` off the walker instead.
+    has emit: bool = True;
+
     has considered: int = 0;
     has matched: int = 0;
     has notes: list[str] = [];
+    has cards: list[NeedCard] = [];
     has reports: list[NeedCard] = [];
 
     can begin with Root entry {
         require_engine("judge_match");
-        visit [root.shared --> [?:Need]];
+        if self.woke_on {
+            log_walker("MatchWalker", f"woke on its own -- {self.woke_on}");
+        }
+
+        if not self.from_pledge {
+            visit [root.shared --> [?:Need]];
+            return;
+        }
+
+        # Pledge-triggered: the new pledge's own reachability IS the candidate
+        # set. Up its RoutedThrough edges to the orgs holding it, then back down
+        # every BroadcastTo aimed at those same orgs. No scan and no index --
+        # it is the matcher's usual traversal run backwards from the other end.
+        host = jobj(self.from_pledge);
+        if not isinstance(host, Contribution) {
+            disengage;
+        }
+        reachable: list[Need] = [];
+        seen_needs: list[str] = [];
+        for org in [host ->:RoutedThrough:->] {
+            for nd in [org <-:BroadcastTo:<-] {
+                if jid(nd) not in seen_needs {
+                    seen_needs.append(jid(nd));
+                    reachable.append(nd);
+                }
+            }
+        }
+        visit reachable;
     }
 
     can consider with Need entry {
@@ -590,6 +839,9 @@ walker:protect MatchWalker {
             skip;
         }
         if self.only_code and here.code != self.only_code {
+            skip;
+        }
+        if self.only_codes and here.code not in self.only_codes {
             skip;
         }
 
@@ -622,6 +874,7 @@ walker:protect MatchWalker {
         ];
         judged: list[MatchVerdict] = [wait f for f in scoring];
 
+        passed_here: list[str] = [];
         for (i, pledge) in enumerate(candidates) {
             self.considered += 1;
             verdict = judged[i];
@@ -631,8 +884,18 @@ walker:protect MatchWalker {
                 best_units = verdict.units;
                 best_why = verdict.rationale;
             } elif not verdict.fits {
-                self.notes.append(f"{here.code}: passed on \"{pledge.description}\" -- {verdict.rationale}");
+                passed_here.append(f"{here.code}: passed on \"{pledge.description}\" -- {verdict.rationale}");
             }
+        }
+        self.notes = self.notes + passed_here;
+
+        # What the matcher DECLINED is the half worth reading -- "right
+        # category, unusable for this household" is exactly what a keyword
+        # matcher gets wrong. These go into the shared feed and not just onto
+        # `self.notes`, because an autonomous run has no caller reading its
+        # fields: it is spawned from inside another walker and nobody unwraps it.
+        for note in passed_here {
+            log_walker("MatchWalker", note);
         }
 
         if best is None {
@@ -657,7 +920,11 @@ walker:protect MatchWalker {
             "MatchWalker",
             f"matched {here.code} to \"{winner.description}\" (fit {best_score}/100, {best_units} units); {winner.remaining} left on that pledge"
         );
-        report need_card(here);
+        card = need_card(here);
+        self.cards.append(card);
+        if self.emit {
+            report card;
+        }
     }
 
     can wrap with Root exit {
@@ -666,6 +933,15 @@ walker:protect MatchWalker {
                 "MatchWalker",
                 f"considered {self.considered} pledge/need pairs, matched none -- nothing on the shelf fits"
             );
+        } elif self.matched == 0 and self.woke_on {
+            # An autonomous run that found nothing still says so, otherwise the
+            # "woke on its own" line above dangles with no outcome under it.
+            # Worded for both directions -- the thing with no counterpart is a
+            # need when a need woke it, and a pledge when a pledge did.
+            log_walker(
+                "MatchWalker",
+                "nothing reachable to pair it with yet -- everything stays open"
+            );
         }
         flush_engine_log();
     }
@@ -673,7 +949,7 @@ walker:protect MatchWalker {
 
 
 # ===========================================================================
-# 6. FulfillmentWalker  (runs as the seeker, on their poll)
+# 7. FulfillmentWalker  (runs as the seeker, on their poll)
 # ===========================================================================
 
 walker:protect FulfillmentWalker {
@@ -682,9 +958,16 @@ walker:protect FulfillmentWalker {
     The seeker's UI polls this. It is the *only* thing that makes the plan
     change in real time -- and it works purely by noticing `Matched` edges that
     some other user's walker attached since the last poll.
+
+    Settling a match invalidates more than the steps. The caseworker's brief was
+    reasoned over a category that was open and a shelf that has since been drawn
+    down, so this walker wakes the agent again on the way out. Same rule as the
+    matcher: the graph event that made the old answer wrong is what triggers the
+    new one, and the person is never asked to press anything.
     """
 
     has resolved: list[str] = [];
+    has restrategized: bool = False;
     has reports: list[SeekerBoard] = [];
 
     can begin with Root entry {
@@ -755,9 +1038,42 @@ walker:protect FulfillmentWalker {
         );
     }
 
+    """Re-run the caseworker over what is actually left. Never fatal.
+
+    The plan rewrite is the promise this walker keeps; a caseworker that cannot
+    run right now must cost the person a fresher brief, not the update they were
+    waiting for. `StrategyWalker` retires the old brief only once the new one
+    exists, so a failure here leaves the previous one on screen rather than
+    blanking the card.
+    """
+    def restrategize(person: Person) {
+        try {
+            strategist = StrategyWalker(person_jid=jid(person));
+            root spawn strategist;
+            self.restrategized = len(strategist.brief) > 0;
+            if self.restrategized {
+                log_walker(
+                    "FulfillmentWalker",
+                    f"{' and '.join(self.resolved)} now covered -- woke the caseworker to re-plan around what is left"
+                );
+            }
+        } except Exception as e {
+            log_walker(
+                "engine",
+                f"plan updated, but the caseworker could not re-plan on it: {str(e)}"
+            );
+        }
+    }
+
     can wrap with Root exit {
-        flush_engine_log();
         person = _my_person();
+        # Only on the one poll where something actually settled. Every other
+        # tick of the 3s poll does no model work at all and returns immediately.
+        if person is not None and self.resolved {
+            self.restrategize(person);
+        }
+
+        flush_engine_log();
         if person is not None {
             report build_board(person);
         } else {
@@ -782,7 +1098,7 @@ walker:protect FulfillmentWalker {
 
 
 # ===========================================================================
-# 7. FollowUpWalker  (the one with memory)
+# 8. FollowUpWalker  (the one with memory)
 # ===========================================================================
 
 walker:protect FollowUpWalker {
@@ -805,6 +1121,11 @@ walker:protect FollowUpWalker {
     has fanout: int = 0;
     has reworded: int = 0;
     has second_fronts: int = 0;
+    has rematched: int = 0;
+
+    # Codes whose reachable org set actually grew this run -- the only ones
+    # worth re-matching, since nothing else about the shelf changed.
+    has widened: list[str] = [];
     has reports: list[NeedCard] = [];
 
     can begin with Root entry {
@@ -879,6 +1200,9 @@ walker:protect FollowUpWalker {
 
         self.escalated += 1;
         self.fanout += added;
+        if added > 0 {
+            self.widened.append(here.code);
+        }
 
         detail = (
             f"{here.code} unfilled after {hours}h (escalation #{here.escalations}) -> "
@@ -897,6 +1221,26 @@ walker:protect FollowUpWalker {
     }
 
     can wrap with Root exit {
+        # Widening the radius is a reachability change like any other: orgs that
+        # were not on this need's horizon a moment ago are now, and any pledge
+        # routed through them just became a candidate. So escalating retries the
+        # match itself rather than waiting for someone to notice.
+        if self.widened {
+            try {
+                matcher = MatchWalker(
+                    only_codes=self.widened,
+                    emit=False,
+                    woke_on=f"{len(self.widened)} escalated need(s) can now reach further orgs"
+                );
+                root spawn matcher;
+                self.rematched = matcher.matched;
+            } except Exception as e {
+                log_walker(
+                    "engine",
+                    f"escalated, but the match it triggered could not run: {str(e)}"
+                );
+            }
+        }
         flush_engine_log();
     }
 }
@@ -936,13 +1280,22 @@ walker:protect CommunityBoard {
 
 
 walker:protect PledgeWalker {
-    """A helper puts something on the shelf, routed through an org."""
+    """A helper puts something on the shelf, routed through an org.
+
+    Putting it on the shelf IS running the matcher. The helper does not get a
+    button to press afterwards: the moment the `RoutedThrough` edge exists, this
+    walker wakes `MatchWalker` scoped to exactly the needs that pledge can now
+    reach. The other trigger is `NeedBroadcastWalker`, from the opposite side --
+    between them, whichever half of a match arrives second sets it off.
+    """
 
     has kind: str;
     has description: str;
     has capacity: int;
     has org_id: str;
     has notes: str = "";
+    has matched_now: int = 0;
+    has matched_codes: list[str] = [];
     has reports: list[str] = [];
 
     can pledge with Root entry {
@@ -971,6 +1324,25 @@ walker:protect PledgeWalker {
             log_walker(
                 "PledgeWalker",
                 f"new pledge on the shelf: \"{self.description}\" x{self.capacity}, routed through {host.name}"
+            );
+        }
+
+        # Same rule as the need side: the pledge appearing is itself the
+        # trigger. Swallowed on failure -- a matcher that cannot run must not
+        # cost the helper the pledge they just made.
+        try {
+            matcher = MatchWalker(
+                from_pledge=jid(contribution),
+                emit=False,
+                woke_on=f"a pledge landed on the shelf: \"{self.description}\""
+            );
+            root spawn matcher;
+            self.matched_now = matcher.matched;
+            self.matched_codes = [c.code for c in matcher.cards];
+        } except Exception as e {
+            log_walker(
+                "engine",
+                f"pledge is on the shelf, but the match it triggered could not run: {str(e)}"
             );
         }
         report jid(contribution);
