@@ -366,6 +366,13 @@ def _upsert_org(hit: LiveOrgHit) -> bool {
         if hit.zip_prefix and not existing.zip_prefix {
             existing.zip_prefix = hit.zip_prefix;
         }
+        if not [existing ->:KeepsTally:->] {
+            tally = existing +>:KeepsTally:+> OrgTally(
+                kind=existing.category,
+                updated_at=now_iso()
+            );
+            grant(tally, level=WritePerm);
+        }
         return True;
     }
     org = root.shared ++> Org(

@@ -1641,6 +1641,9 @@ walker:protect OrganizationBoard {
         if org is None {
             raise PermissionError("An organization operator account is required.");
         }
+        # Backfill organizations created before ledgers were introduced so every
+        # operator starts with an explicit zero balance instead of an empty board.
+        _org_tally(org, org.category);
         tally_views: list[OrganizationTallyView] = [];
         for tally in [org ->:KeepsTally:->] {
             available = max(0, tally.received - tally.distributed - tally.reserved);
