@@ -22,4 +22,4 @@ if [ -z "${MONGODB_URI:-}" ]; then
   echo "Warning: MONGODB_URI is not set; graph data may be lost when the server restarts." >&2
 fi
 
-exec jac start main.jac --host 0.0.0.0 --port "${PORT:-8000}"
+exec jac start main.jac --no-client --host 0.0.0.0 --port "${PORT:-8000}"

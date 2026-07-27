@@ -74,3 +74,4 @@ temperature = 0.2
 
 [dependencies]
 byllm = "~=0.6"
+pymongo = ">=4.10,<5"

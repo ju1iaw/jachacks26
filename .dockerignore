@@ -1,0 +1,12 @@
+.git
+.jac
+.vercel
+.vercel-output
+node_modules
+dist
+__pycache__
+.pytest_cache
+.env
+bridge/.env
+.DS_Store
+*.pyc
