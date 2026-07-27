@@ -47,6 +47,15 @@ curl -fsS -X POST \
   -d '{}'
 ```
 
+When Railway provisions MongoDB with a 500 MB free/trial volume, deploy the
+small wrapper image in `infra/mongodb` to the MongoDB service. It preserves the
+official MongoDB 8 image and persistent volume while lowering MongoDB's
+index-build free-space guard so Jac can create its authentication indexes:
+
+```bash
+railway up infra/mongodb --path-as-root --service MongoDB
+```
+
 To create the demo accounts and data:
 
 ```bash
