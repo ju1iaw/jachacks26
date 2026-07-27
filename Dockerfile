@@ -10,4 +10,7 @@ RUN chmod +x scripts/start_prod.sh
 
 EXPOSE 8000
 
-CMD ["./scripts/start_prod.sh"]
+# The Jac base image launches `jac` as its entrypoint. Override it so Railway
+# executes our production bootstrap script instead of treating the script path
+# as a Jac subcommand.
+ENTRYPOINT ["/app/scripts/start_prod.sh"]
