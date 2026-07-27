@@ -9,8 +9,10 @@ Results are upserted onto `root.shared` as `Org` nodes tagged in `notes` with
 see the same graph — no parallel ad-hoc list on the side.
 """
 
-import requests;
-import from core.graph { Org }
+import json;
+import urllib.parse;
+import urllib.request;
+import from core.graph { KeepsTally, Org, OrgTally, now_iso }
 import from core.commons { all_orgs, log_walker }
 import from core.geo { AREA_CENTROIDS }
 
@@ -162,14 +164,15 @@ obj LiveOrgHit {
 def _photon_hits(query: str, zip_prefix: str, prefer_senior: bool) -> list[LiveOrgHit] {
     hits: list[LiveOrgHit] = [];
     try {
-        response = requests.get(
-            "https://photon.komoot.io/api/",
-            params={"q": query, "limit": 8, "lang": "en"},
-            headers={"User-Agent": DIRECTORY_UA},
-            timeout=10
+        params = urllib.parse.urlencode({"q": query, "limit": 8, "lang": "en"});
+        request = urllib.request.Request(
+            "https://photon.komoot.io/api/?" + params,
+            headers={"User-Agent": DIRECTORY_UA}
         );
-        response.raise_for_status();
-        features = response.json()["features"] as list[dict[str, any]];
+        response = urllib.request.urlopen(request, timeout=10);
+        payload = json.loads(response.read().decode("utf-8")) as dict[str, any];
+        response.close();
+        features = payload["features"] as list[dict[str, any]];
     } except Exception {
         return [];
     }
@@ -254,14 +257,17 @@ def _overpass_hits(zip_prefix: str, prefer_senior: bool) -> list[LiveOrgHit] {
         + ");out center tags 35;"
     );
     try {
-        response = requests.post(
+        encoded = urllib.parse.urlencode({"data": query}).encode("utf-8");
+        request = urllib.request.Request(
             "https://overpass-api.de/api/interpreter",
-            data={"data": query},
+            data=encoded,
             headers={"User-Agent": DIRECTORY_UA},
-            timeout=22
+            method="POST"
         );
-        response.raise_for_status();
-        elements = response.json().get("elements", []) as list[dict[str, any]];
+        response = urllib.request.urlopen(request, timeout=22);
+        payload = json.loads(response.read().decode("utf-8")) as dict[str, any];
+        response.close();
+        elements = payload.get("elements", []) as list[dict[str, any]];
     } except Exception {
         return [];
     }
@@ -307,7 +313,7 @@ def _overpass_hits(zip_prefix: str, prefer_senior: bool) -> list[LiveOrgHit] {
         phone = str(tags.get("phone", tags.get("contact:phone", "")));
         hours = str(tags.get("opening_hours", ""));
         zpref = postcode[:3] if len(postcode) >= 3 else zip_prefix;
-        note = LIVE_SOURCE_TAG + "; overpass social_facility";
+        note: str = LIVE_SOURCE_TAG + "; overpass social_facility";
         if for_whom {
             note = note + "; for=" + for_whom;
         }
@@ -373,6 +379,11 @@ def _upsert_org(hit: LiveOrgHit) -> bool {
         tier=hit.tier
     );
     grant(org, level=ConnectPerm);
+    tally = org +>:KeepsTally:+> OrgTally(
+        kind=hit.category,
+        updated_at=now_iso()
+    );
+    grant(tally, level=WritePerm);
     # Live listings rarely publish structured gates; leave Requires empty so
     # eligibility marks them open unless we learn otherwise later.
     return True;

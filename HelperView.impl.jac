@@ -19,12 +19,13 @@ impl HelperView.refresh -> None {
             view = result.reports[0];
             needs = view.needs;
             orgs = view.orgs;
+            opportunities = view.opportunities;
 
             # Seed active offers from this helper's live pledges (once per id).
             known = _ref_ids(known_ref);
             next_offers = _ref_offers(offers_ref);
             for p in view.pledges {
-                if not p.mine or p.remaining <= 0 {
+                if not p.mine or p.status == "withdrawn" {
                     continue;
                 }
                 ov = offer_from_pledge(p);
@@ -89,12 +90,6 @@ impl HelperView.submit_offer -> None {
         known_ref.current = known;
         offers = next_offers;
         offer_text = "";
-        # Quietly try to match new offers to open needs.
-        try {
-            _ = await root spawn MatchWalker();
-        } except Exception {
-            added = added;
-        }
         await refresh();
     } except Exception as e {
         raw = str(e);

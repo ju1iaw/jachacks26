@@ -8,9 +8,9 @@ each with a gray "show completed" fold.
 import from react { useEffect }
 import from .components.HelperBits { NeedSection, OffersPanel }
 
-sv import from .core.graph { NeedCard, OrgCard, PledgeCard }
+sv import from .core.graph { NeedCard, OrgCard, PledgeCard, VolunteerOpportunity }
 sv import from .core.walkers {
-    CommunityBoard, HelperOfferWalker, MatchWalker, RetirePledgeWalker
+    CommunityBoard, HelperOfferWalker, RetirePledgeWalker
 }
 
 
@@ -47,7 +47,11 @@ def offer_from_pledge(p: PledgeCard) -> OfferView {
         kind=p.kind,
         description=p.description,
         details=details,
-        notes=("via " + p.via_org) if p.via_org else "",
+        notes=(
+            "Awaiting receipt confirmation from " + p.via_org
+            if p.status == "offered"
+            else "via " + p.via_org
+        ) if p.via_org else "",
         pledge_id=p.pledge_id
     );
 }
@@ -74,6 +78,7 @@ def demo_helper_offers -> list[OfferView] {
 def:pub HelperView(display_name: str) -> JsxElement {
     has needs: list[NeedCard] = [];
     has orgs: list[OrgCard] = [];
+    has opportunities: list[VolunteerOpportunity] = [];
     has offer_text: str = "";
     has offers: list[OfferView] = [];
     has past_offers: list[OfferView] = [];
@@ -100,8 +105,6 @@ def:pub HelperView(display_name: str) -> JsxElement {
         return lambda { clearInterval(timer); };
     }, []);
 
-    matched_active = [n for n in needs if n.status == "matched"];
-    matched_done = [n for n in needs if n.status == "fulfilled"];
     org_active = [n for n in needs if n.status == "open"];
     org_done = [n for n in needs if n.status == "fulfilled"];
 
@@ -134,15 +137,40 @@ def:pub HelperView(display_name: str) -> JsxElement {
 
         <div className="helper-cols" style={{"marginTop": "28px"}}>
             <div className="helper-left stack" style={{"gap": "22px"}}>
+                <div className="need-section">
+                    <div className="need-section-head">
+                        <h2 className="need-section-title">What organizations need</h2>
+                        {if len(opportunities) > 0 {
+                            <span className="notif-badge" key="opp-count">{str(len(opportunities))}</span>
+                        }}
+                    </div>
+                    <p className="small muted" style={{"marginBottom": "12px"}}>
+                        Calculated from verified organization inventory and open community demand.
+                    </p>
+                    <div className="stack" style={{"gap": "10px"}}>
+                        {if len(opportunities) == 0 {
+                            <p className="small muted" key="none-needed">Current verified inventory covers open demand.</p>
+                            skip;
+                        }}
+                        {for opp in opportunities {
+                            <div className="card tight" key={opp.org_id + "-" + opp.kind}>
+                                <div className="row">
+                                    <span className="pill cool">{opp.kind}</span>
+                                    <b>{str(opp.needed_units) + " needed"}</b>
+                                </div>
+                                <h3>{opp.org_name}</h3>
+                                <p className="small muted">
+                                    {str(opp.open_demand) + " requested · " + str(opp.available) + " verified available"}
+                                </p>
+                                {if opp.address {
+                                    <p className="small" key="address">{opp.address}</p>
+                                }}
+                            </div>
+                        }}
+                    </div>
+                </div>
                 <NeedSection
-                    title="Matched Individual Needs"
-                    active={matched_active}
-                    completed={matched_done}
-                    badge={len(matched_active)}
-                    empty_msg="No incomplete matches yet. When your offers fit a need, they show up here."
-                />
-                <NeedSection
-                    title="By organization"
+                    title="Open anonymized needs"
                     active={org_active}
                     completed={org_done}
                     badge={0}

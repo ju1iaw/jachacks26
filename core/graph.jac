@@ -42,6 +42,7 @@ node Account {
     # Eligibility-relevant facts pulled from intake prompts (age, children,
     # employment, etc.). Editable in Settings so the person can correct them.
     has eligibility_notes: str = "";
+    has org_id: str = "";
 }
 
 node ContactClaim {
@@ -196,13 +197,31 @@ node Donor {
 
 
 node Contribution {
-    """A pledge. `remaining` is the memory that stops a depleted donor being re-offered."""
+    """A volunteer offer. Only an organization can mark units received."""
 
     has kind: str;
     has description: str;
     has capacity: int;
     has remaining: int;
     has notes: str = "";
+    has status: str = "offered";
+    has confirmed_units: int = 0;
+    has received_units: int = 0;
+    has received_at: str = "";
+}
+
+
+node OrgTally {
+    """The authoritative inventory ledger for one type at one organization."""
+
+    has kind: str;
+    has received: int = 0;
+    has reserved: int = 0;
+    has distributed: int = 0;
+    has claims: int = 0;
+    has people_served: int = 0;
+    has current_people: int = 0;
+    has updated_at: str = "";
 }
 
 
@@ -229,6 +248,7 @@ node Need {
     has broadcast_tier: int = 1;
     has escalations: int = 0;
     has fulfillment_note: str = "";
+    has claimed_at: str = "";
 }
 
 
@@ -276,6 +296,8 @@ edge Pledges: Donor --> Contribution {}
 
 edge RoutedThrough: Contribution --> Org {}
 
+edge KeepsTally: Org --> OrgTally {}
+
 edge Matched: Need --> Contribution {
     # The pledge's description is copied onto the edge rather than read back off
     # the Contribution: the two nodes have different owners under the server's
@@ -287,6 +309,8 @@ edge Matched: Need --> Contribution {
     has score: int = 0;
     has engine: str = "unknown";
     has at: str = "";
+    has org_id: str = "";
+    has ledger_kind: str = "";
 }
 
 
@@ -336,6 +360,9 @@ obj PledgeCard {
     has via_org: str;
     has notes: str = "";
     has mine: bool = False;
+    has status: str = "offered";
+    has confirmed_units: int = 0;
+    has received_units: int = 0;
 }
 
 
@@ -412,6 +439,21 @@ obj AccountView {
     has phone: str = "";
     has location: str = "";
     has eligibility_notes: str = "";
+    has org_id: str = "";
+}
+
+
+obj VolunteerOpportunity {
+    """A tally-derived request shown to volunteers, never a recipient record."""
+
+    has org_id: str;
+    has org_name: str;
+    has kind: str;
+    has needed_units: int;
+    has open_demand: int;
+    has available: int;
+    has address: str = "";
+    has hours: str = "";
 }
 
 
@@ -431,6 +473,34 @@ obj CommunityView {
     has engine_reason: str = "";
     has engine_calls: int = 0;
     has engine_roles: list[str] = [];
+    has opportunities: list[VolunteerOpportunity] = [];
+}
+
+
+obj OrganizationTallyView {
+    has org_id: str;
+    has org_name: str;
+    has kind: str;
+    has received: int;
+    has reserved: int;
+    has distributed: int;
+    has available: int;
+    has open_demand: int;
+    has needed_from_volunteers: int;
+    has claims: int;
+    has people_served: int;
+    has current_people: int;
+}
+
+
+obj OrganizationBoardView {
+    """The organization console: ledger totals plus work awaiting confirmation."""
+
+    has org_id: str;
+    has org_name: str;
+    has tallies: list[OrganizationTallyView] = [];
+    has pending_offers: list[PledgeCard] = [];
+    has matched_needs: list[NeedCard] = [];
 }
 
 

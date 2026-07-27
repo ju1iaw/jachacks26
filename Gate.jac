@@ -338,6 +338,11 @@ def:pub Gate(onReady: Callable[[], None]) -> JsxElement {
                     <h1>
                         {"Sign in to help" if selected_role == "helper" else "Sign in to get support"}
                     </h1>
+                    {if selected_role == "seeker" {
+                        <p className="muted small" key="quick-access-help" style={{"marginTop": "8px"}}>
+                            Sign in once, then use Quick access in Settings to return without a password on this device.
+                        </p>
+                    }}
                     <div className="contact-tabs login-tabs" role="tablist" aria-label="Sign-in method">
                         <button
                             role="tab"

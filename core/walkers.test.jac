@@ -134,3 +134,37 @@ test "a matched need's units are read off the edge, not guessed" {
 
     assert pledge.remaining == 6;
 }
+
+
+# ===========================================================================
+# Organization-owned inventory
+# ===========================================================================
+
+test "volunteer offers are unverified by default" {
+    offer = Contribution(
+        kind="food",
+        description="meal boxes",
+        capacity=10,
+        remaining=0
+    );
+    assert offer.status == "offered";
+    assert offer.confirmed_units == 0;
+    assert offer.received_units == 0;
+}
+
+
+test "needed from volunteers uses organization-confirmed availability" {
+    tally = OrgTally(
+        kind="food",
+        received=20,
+        reserved=6,
+        distributed=9
+    );
+    assert volunteer_shortfall(tally, 12) == 7;
+}
+
+
+test "surplus inventory never creates negative volunteer need" {
+    tally = OrgTally(kind="food", received=30, distributed=5);
+    assert volunteer_shortfall(tally, 4) == 0;
+}

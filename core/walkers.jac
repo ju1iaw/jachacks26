@@ -63,10 +63,11 @@ purely by reading and writing the same graph:
 
 import from core.graph {
     Activity, AnsweredQuestion, CaseStrategy, Contribution, Donor, Need, NeedCard,
-    Org, Person, PlanStep, Requirement, SeekerBoard, CommunityView, StrategyView,
-    OfferView,
+    Org, OrgTally, OrganizationBoardView, OrganizationTallyView, Person,
+    PlanStep, PledgeCard, Requirement, SeekerBoard, CommunityView, StrategyView,
+    OfferView, VolunteerOpportunity,
     BroadcastTo, HasAnswer, HasNeed, HasStep, HasStrategy, Matched, Pledges,
-    Requires, RoutedThrough,
+    Requires, RoutedThrough, KeepsTally,
     age_hours, age_label, need_code, now_iso, rewind
 }
 import from core.directory {
@@ -129,6 +130,88 @@ def need_card(nd: Need) -> NeedCard {
 
 def _rank(step: PlanStep) -> int {
     return step.rank;
+}
+
+
+def _org_tally(org: Org, kind: str) -> OrgTally {
+    for tally in [org ->:KeepsTally:->] {
+        if tally.kind == kind {
+            return tally;
+        }
+    }
+    tally = org +>:KeepsTally:+> OrgTally(kind=kind, updated_at=now_iso());
+    grant(tally, level=WritePerm);
+    return tally;
+}
+
+
+def _operator_org -> Org | None {
+    acct = _my_account();
+    if acct is None or acct.role != "organization" or not acct.org_id {
+        return None;
+    }
+    candidate = jobj(acct.org_id);
+    return candidate if isinstance(candidate, Org) else None;
+}
+
+
+def _require_role(allowed: list[str]) {
+    # CLI scripts and unit tests have one root; served requests have distinct
+    # shared and user roots and must honor app-domain roles.
+    if jid(root) == jid(root.shared) {
+        return;
+    }
+    acct = _my_account();
+    if acct is None or acct.role not in allowed {
+        raise PermissionError("This action is not available for this account role.");
+    }
+}
+
+
+def _open_demand(org: Org, kind: str) -> int {
+    total = 0;
+    for need in [org <-:BroadcastTo:<-] {
+        if need.category != kind or need.status != "open" {
+            continue;
+        }
+        # A need may be broadcast widely, but the public shortfall must count it
+        # once. Its first reachable organization owns the demand tally.
+        hosts = [need ->:BroadcastTo:->];
+        if hosts and jid(hosts[0]) == jid(org) {
+            total += max(1, need.household);
+        }
+    }
+    return total;
+}
+
+
+def volunteer_shortfall(tally: OrgTally, open_demand: int) -> int {
+    available = max(0, tally.received - tally.distributed - tally.reserved);
+    return max(0, open_demand - available);
+}
+
+
+def volunteer_opportunities -> list[VolunteerOpportunity] {
+    out: list[VolunteerOpportunity] = [];
+    for org in [root.shared --> [?:Org]] {
+        tally = _org_tally(org, org.category);
+        demand = _open_demand(org, tally.kind);
+        available = max(0, tally.received - tally.distributed - tally.reserved);
+        needed = volunteer_shortfall(tally, demand);
+        if needed > 0 {
+            out.append(VolunteerOpportunity(
+                org_id=jid(org),
+                org_name=org.name,
+                kind=tally.kind,
+                needed_units=needed,
+                open_demand=demand,
+                available=available,
+                address=org.address,
+                hours=org.hours
+            ));
+        }
+    }
+    return out;
 }
 
 
@@ -447,6 +530,9 @@ walker:protect NeedBroadcastWalker {
 
             for org in orgs_for(category, person.zip_prefix, 1) {
                 need +>:BroadcastTo(tier=1):+> org;
+                for route_edge in [edge need ->:BroadcastTo:-> org] {
+                    grant(route_edge, level=WritePerm);
+                }
                 self.fanout += 1;
             }
             fresh.append(need);
@@ -614,6 +700,7 @@ walker:protect IntakeWalker {
     has reports: list[SeekerBoard] = [];
 
     can start with Root entry {
+        _require_role(["seeker"]);
         ensure_commons();
         acct = _my_account();
         name = self.alias if self.alias else (acct.display_name if acct is not None else "friend");
@@ -720,7 +807,7 @@ walker:protect IntakeWalker {
         if audit.leaks {
             log_walker(
                 "PrivacyAuditor",
-                f"blocked {len(audit.leaks)} identity leak(s) before publishing: {'; '.join(audit.leaks)}"
+                f"blocked {len(audit.leaks)} identity leak(s) before publishing; sensitive fragments stayed private"
             );
         } else {
             log_walker("PrivacyAuditor", "audited the public summary -- no identity leaks found");
@@ -803,6 +890,19 @@ walker:protect IntakeWalker {
         }
         for pledge in [stale ->:Matched:->] {
             pledge.remaining = min(pledge.capacity, pledge.remaining + units);
+            pledge.received_units = min(pledge.capacity, pledge.received_units + units);
+            for e in [edge stale ->:Matched:->] {
+                if not e.org_id {
+                    continue;
+                }
+                holder = jobj(e.org_id);
+                if isinstance(holder, Org) {
+                    ledger_kind = e.ledger_kind if e.ledger_kind else stale.category;
+                    tally = _org_tally(holder, ledger_kind);
+                    tally.reserved = max(0, tally.reserved - units);
+                    tally.updated_at = now_iso();
+                }
+            }
             log_walker(
                 "IntakeWalker",
                 f"retired {stale.code} and returned {units} unit(s) to \"{pledge.description}\" -- {pledge.remaining} available again"
@@ -835,6 +935,7 @@ walker:protect AnswerWalker {
     has reports: list[SeekerBoard] = [];
 
     can apply with Root entry {
+        _require_role(["seeker"]);
         person = _my_person();
         if person is None {
             disengage;
@@ -862,7 +963,7 @@ walker:protect AnswerWalker {
             answer=clean,
             at=now_iso()
         );
-        log_walker("AnswerWalker", f"answered \"{asked}\" -> \"{clean}\"; re-planning from scratch");
+        log_walker("AnswerWalker", "recorded a private answer; re-planning from scratch");
 
         # Fold it into the narrative rather than patching `assets` by hand: the
         # intake role already knows how to turn prose into structured facts, so the
@@ -974,7 +1075,12 @@ walker:protect MatchWalker {
         seen: list[str] = [];
         for org in [here ->:BroadcastTo:->] {
             for pledge in [org <-:RoutedThrough:<-] {
-                if pledge.remaining > 0 and jid(pledge) not in seen {
+                if (
+                    pledge.status in ["received", "partially_received"]
+                    and pledge.received_units > 0
+                    and pledge.remaining > 0
+                    and jid(pledge) not in seen
+                ) {
                     seen.append(jid(pledge));
                     candidates.append(pledge);
                 }
@@ -998,7 +1104,12 @@ walker:protect MatchWalker {
             if verdict.fits and verdict.score > best_score and verdict.units > 0 {
                 best = pledge;
                 best_score = verdict.score;
-                best_units = verdict.units;
+                best_units = min(
+                    verdict.units,
+                    pledge.remaining,
+                    pledge.received_units,
+                    max(1, here.household)
+                );
                 best_why = verdict.rationale;
             } elif not verdict.fits {
                 passed_here.append(f"{here.code}: passed on \"{pledge.description}\" -- {verdict.rationale}");
@@ -1020,15 +1131,33 @@ walker:protect MatchWalker {
         }
 
         winner = best as Contribution;
+        routed = [o for o in [winner ->:RoutedThrough:->] if o in [here ->:BroadcastTo:->]];
+        if not routed {
+            skip;
+        }
+        owner_org = routed[0];
+        tally = _org_tally(owner_org, winner.kind);
+        available = tally.received - tally.distributed - tally.reserved;
+        if available < best_units {
+            skip;
+        }
         here +>:Matched(
             pledge_desc=winner.description,
             rationale=best_why,
             units=best_units,
             score=best_score,
             engine=engine(),
-            at=now_iso()
+            at=now_iso(),
+            org_id=jid(owner_org),
+            ledger_kind=winner.kind
         ):+> winner;
+        for matched_edge in [edge here ->:Matched:->] {
+            grant(matched_edge, level=WritePerm);
+        }
         winner.remaining = winner.remaining - best_units;
+        winner.received_units = winner.received_units - best_units;
+        tally.reserved += best_units;
+        tally.updated_at = now_iso();
         here.status = "matched";
         here.fulfillment_note = best_why;
         self.matched += 1;
@@ -1085,6 +1214,7 @@ walker:protect FulfillmentWalker {
     has reports: list[SeekerBoard] = [];
 
     can begin with Root entry {
+        _require_role(["seeker"]);
         visit [root --> [?:Person]];
     }
 
@@ -1093,67 +1223,52 @@ walker:protect FulfillmentWalker {
     }
 
     can settle with Need entry {
-        # Polls never auto-settle -- the seeker must Accept the helper offer.
-        if not self.accept_code or here.code != self.accept_code {
-            skip;
-        }
-        if here.status != "matched" {
-            skip;
-        }
-        owners = [here <-:HasNeed:<-];
-        if not owners {
-            skip;
-        }
-        person = owners[0];
-
-        noun = CATEGORY_NOUN.get(here.category, here.category);
-
-        # Work out what the next open step WOULD be once this fulfillment lands,
-        # without mutating anything yet -- mirrors the covering/optional rules
-        # below exactly, so the nudge can be generated before anything commits.
-        next_open = "";
-        for step in sorted([person ->:HasStep:->], key=_rank) {
-            would_be_covered = step.category == here.category and step.status in ["open", "blocked"];
-            would_be_optional = step.unblocks and step.unblock_category == here.category and step.status == "open";
-            if step.status == "open" and not would_be_covered and not would_be_optional and not next_open {
-                next_open = step.title;
+        # Accept records the seeker's claim; only the organization can certify
+        # physical distribution and move it to fulfilled.
+        if (
+            self.accept_code
+            and here.code == self.accept_code
+            and here.status == "matched"
+        ) {
+            here.status = "claimed";
+            here.claimed_at = now_iso();
+            for e in [edge here ->:Matched:->] {
+                if e.org_id {
+                    holder = jobj(e.org_id);
+                    if isinstance(holder, Org) {
+                        tally = _org_tally(
+                            holder,
+                            e.ledger_kind if e.ledger_kind else here.category
+                        );
+                        tally.claims += e.units;
+                        tally.updated_at = now_iso();
+                    }
+                }
             }
-        }
-
-        # The nudge is the only part of settling a match that needs the model.
-        # If it is not available right now, mutate NOTHING -- the Need stays
-        # "matched" and this same check retries on the person's next poll, with
-        # no fabricated text standing in for the real one.
-        try {
-            nudge = next_step_nudge_safe(noun, next_open);
-        } except Exception as e {
-            log_walker(
-                "engine",
-                f"{here.code} matched but the model is unavailable for the update text ({str(e)}) -- will retry"
-            );
             skip;
         }
-
-        covered = 0;
-        for step in [person ->:HasStep:->] {
-            if step.category == here.category and step.status in ["open", "blocked"] {
-                step.status = "covered";
-                step.detail = here.fulfillment_note if here.fulfillment_note else step.detail;
-                covered += 1;
+        # Organization-confirmed distributions are reconciled on the seeker's
+        # next poll. The seeker never causes the authoritative state change.
+        if here.status == "fulfilled" {
+            owners = [here <-:HasNeed:<-];
+            if owners {
+                person = owners[0];
+                changed = 0;
+                for step in [person ->:HasStep:->] {
+                    if step.category == here.category and step.status in ["open", "blocked"] {
+                        step.status = "covered";
+                        step.detail = here.fulfillment_note if here.fulfillment_note else step.detail;
+                        changed += 1;
+                    }
+                }
+                if changed > 0 {
+                    self.resolved.append(CATEGORY_NOUN.get(here.category, here.category));
+                }
             }
-            if step.unblocks and step.unblock_category == here.category and step.status == "open" {
-                step.status = "optional";
-            }
+            skip;
         }
-
-        here.status = "fulfilled";
-        self.resolved.append(noun);
-        person.last_nudge = nudge;
-
-        log_walker(
-            "FulfillmentWalker",
-            f"{here.code} fulfilled -> rewrote {covered} plan step(s); next open step is \"{next_open if next_open else 'nothing'}\""
-        );
+        # Matched/open needs are read-only in the seeker session.
+        skip;
     }
 
     """Re-run the caseworker over what is actually left. Never fatal.
@@ -1247,6 +1362,7 @@ walker:protect FollowUpWalker {
     has reports: list[NeedCard] = [];
 
     can begin with Root entry {
+        _require_role(["organization"]);
         require_engine("escalation_strategy");
         visit [root.shared --> [?:Need]];
     }
@@ -1365,8 +1481,189 @@ walker:protect FollowUpWalker {
 
 
 # ===========================================================================
+# Organization-owned inventory mutations
+# ===========================================================================
+
+walker:protect OrganizationReceiptWalker {
+    """Confirm that a volunteer offer physically reached the organization."""
+
+    has pledge_id: str;
+    has units: int;
+    has reports: list[str] = [];
+
+    can record with Root entry {
+        org = _operator_org();
+        pledge = jobj(self.pledge_id);
+        if org is None {
+            raise PermissionError("An organization operator account is required.");
+        }
+        if not isinstance(pledge, Contribution) or org not in [pledge ->:RoutedThrough:->] {
+            raise ValueError("That offer is not routed through this organization.");
+        }
+        accepted = min(max(0, self.units), pledge.capacity - pledge.confirmed_units);
+        if accepted <= 0 {
+            raise ValueError("No unreceived units remain on this offer.");
+        }
+        pledge.confirmed_units += accepted;
+        pledge.received_units += accepted;
+        pledge.remaining += accepted;
+        pledge.status = (
+            "received"
+            if pledge.confirmed_units >= pledge.capacity
+            else "partially_received"
+        );
+        pledge.received_at = now_iso();
+        tally = _org_tally(org, pledge.kind);
+        tally.received += accepted;
+        tally.updated_at = now_iso();
+        log_walker(
+            "OrganizationReceiptWalker",
+            f"{org.name} confirmed {accepted} unit(s) received: \"{pledge.description}\""
+        );
+        try {
+            matcher = MatchWalker(
+                from_pledge=jid(pledge),
+                emit=False,
+                woke_on=f"{org.name} confirmed inventory received"
+            );
+            root spawn matcher;
+        } except Exception as e {
+            log_walker("engine", f"receipt recorded, but matching could not run: {str(e)}");
+        }
+        report jid(pledge);
+    }
+}
+
+
+walker:protect OrganizationDistributionWalker {
+    """Confirm that reserved inventory left the organization with the recipient."""
+
+    has need_code: str;
+    has people_served: int = 0;
+    has reports: list[str] = [];
+
+    can record with Root entry {
+        org = _operator_org();
+        if org is None {
+            raise PermissionError("An organization operator account is required.");
+        }
+        matches = [
+            n for n in [org <-:BroadcastTo:<-]
+            if n.code == self.need_code
+        ];
+        if not matches {
+            raise ValueError("Unknown need.");
+        }
+        need = matches[0];
+        units = 0;
+        ledger_kind = need.category;
+        authorized = False;
+        for e in [edge need ->:Matched:->] {
+            if e.org_id == jid(org) {
+                units = e.units;
+                ledger_kind = e.ledger_kind if e.ledger_kind else need.category;
+                authorized = True;
+            }
+        }
+        if need.status != "claimed" or not authorized or units <= 0 {
+            raise PermissionError("This organization has no claimed reservation for that need.");
+        }
+        tally = _org_tally(org, ledger_kind);
+        tally.reserved = max(0, tally.reserved - units);
+        tally.distributed += units;
+        tally.people_served += max(1, self.people_served if self.people_served > 0 else need.household);
+        tally.updated_at = now_iso();
+        need.status = "fulfilled";
+        need.fulfillment_note = f"{org.name} confirmed distribution of {units} unit(s).";
+        log_walker(
+            "OrganizationDistributionWalker",
+            f"{org.name} confirmed {units} unit(s) distributed for {need.code}"
+        );
+        report need.code;
+    }
+}
+
+
+walker:protect OrganizationOccupancyWalker {
+    """Set a shelter/service organization's current verified headcount."""
+
+    has current_people: int;
+    has reports: list[int] = [];
+
+    can record with Root entry {
+        org = _operator_org();
+        if org is None {
+            raise PermissionError("An organization operator account is required.");
+        }
+        tally = _org_tally(org, org.category);
+        tally.current_people = max(0, self.current_people);
+        tally.updated_at = now_iso();
+        log_walker(
+            "OrganizationOccupancyWalker",
+            f"{org.name} recorded {tally.current_people} people currently served on site"
+        );
+        report tally.current_people;
+    }
+}
+
+
+# ===========================================================================
 # Read endpoints for the two views
 # ===========================================================================
+
+walker:protect OrganizationBoard {
+    """Counts and volunteer shortfall derived solely from organization ledgers."""
+
+    has reports: list[OrganizationBoardView] = [];
+
+    can build with Root entry {
+        org = _operator_org();
+        if org is None {
+            raise PermissionError("An organization operator account is required.");
+        }
+        tally_views: list[OrganizationTallyView] = [];
+        for tally in [org ->:KeepsTally:->] {
+            available = max(0, tally.received - tally.distributed - tally.reserved);
+            demand = _open_demand(org, tally.kind);
+            tally_views.append(OrganizationTallyView(
+                org_id=jid(org),
+                org_name=org.name,
+                kind=tally.kind,
+                received=tally.received,
+                reserved=tally.reserved,
+                distributed=tally.distributed,
+                available=available,
+                open_demand=demand,
+                needed_from_volunteers=volunteer_shortfall(tally, demand),
+                claims=tally.claims,
+                people_served=tally.people_served,
+                current_people=tally.current_people
+            ));
+        }
+        pending: list[PledgeCard] = [];
+        for card in pledge_cards() {
+            if card.via_org == org.name and card.confirmed_units < card.capacity {
+                pending.append(card);
+            }
+        }
+        reserved = [
+            need_card(n) for n in [org <-:BroadcastTo:<-]
+            if n.status in ["matched", "claimed"]
+            and [
+                e for e in [edge n ->:Matched:->]
+                if e.org_id == jid(org)
+            ]
+        ];
+        report OrganizationBoardView(
+            org_id=jid(org),
+            org_name=org.name,
+            tallies=tally_views,
+            pending_offers=pending,
+            matched_needs=reserved
+        );
+    }
+}
+
 
 walker:protect CommunityBoard {
     """Everything the volunteer/donor side renders. Returns NeedCards, not Needs."""
@@ -1374,10 +1671,26 @@ walker:protect CommunityBoard {
     has reports: list[CommunityView] = [];
 
     can build with Root entry {
+        _require_role(["helper"]);
         ensure_commons();
         acct = _my_account();
         rep = engine_report();
-        cards = [need_card(n) for n in [root.shared --> [?:Need]]];
+        # Read the public board through the broadcast topology rather than the
+        # shared root's direct edges. A Need gains more shared edges when it is
+        # matched, and direct-root discovery can stop returning it after that
+        # transition even though its BroadcastTo routes remain public. Walking
+        # back from organizations keeps open and matched cards on the board.
+        needs: list[Need] = [];
+        seen: list[str] = [];
+        for org in [root.shared --> [?:Org]] {
+            for need in [org <-:BroadcastTo:<-] {
+                if jid(need) not in seen {
+                    seen.append(jid(need));
+                    needs.append(need);
+                }
+            }
+        }
+        cards = [need_card(n) for n in needs];
         report CommunityView(
             display_name=acct.display_name if acct is not None else "volunteer",
             needs=cards,
@@ -1391,7 +1704,8 @@ walker:protect CommunityBoard {
             engine_model=rep.model,
             engine_reason=rep.reason,
             engine_calls=rep.calls,
-            engine_roles=rep.roles
+            engine_roles=rep.roles,
+            opportunities=volunteer_opportunities()
         );
     }
 }
@@ -1417,7 +1731,13 @@ walker:protect PledgeWalker {
     has reports: list[str] = [];
 
     can pledge with Root entry {
+        _require_role(["helper"]);
         ensure_commons();
+        host = jobj(self.org_id);
+        if not isinstance(host, Org) {
+            raise ValueError("Choose a valid organization opportunity.");
+        }
+        kind = self.kind if self.kind in CATEGORY_ORDER else host.category;
         acct = _my_account();
         donors = [root --> [?:Donor]];
         donor = donors[0] if donors else (
@@ -1425,25 +1745,28 @@ walker:protect PledgeWalker {
         );
 
         contribution = root.shared ++> Contribution(
-            kind=self.kind,
+            kind=kind,
             description=self.description,
             capacity=max(1, self.capacity),
-            remaining=max(1, self.capacity),
+            remaining=0,
             notes=self.notes
         );
         grant(contribution, level=WritePerm);
+        for shared_edge in [edge root.shared --> contribution] {
+            grant(shared_edge, level=WritePerm);
+        }
         # The donor edge points OUT of the private root into the commons, so the
         # pledge is public and the person who made it is not.
         donor +>:Pledges:+> contribution;
 
-        host = jobj(self.org_id);
-        if isinstance(host, Org) {
-            contribution +>:RoutedThrough:+> host;
-            log_walker(
-                "PledgeWalker",
-                f"new pledge on the shelf: \"{self.description}\" x{self.capacity}, routed through {host.name}"
-            );
+        contribution +>:RoutedThrough:+> host;
+        for route_edge in [edge contribution ->:RoutedThrough:->] {
+            grant(route_edge, level=WritePerm);
         }
+        log_walker(
+            "PledgeWalker",
+            f"new offer awaiting {host.name}: \"{self.description}\" x{self.capacity}"
+        );
 
         # Same rule as the need side: the pledge appearing is itself the
         # trigger. Swallowed on failure -- a matcher that cannot run must not
@@ -1475,9 +1798,15 @@ walker:protect RetirePledgeWalker {
     has reports: list[str] = [];
 
     can retire with Root entry {
+        _require_role(["helper"]);
         target = jobj(self.pledge_id);
-        if isinstance(target, Contribution) {
+        mine: list[str] = [];
+        for donor in [root --> [?:Donor]] {
+            mine = mine + [jid(c) for c in [donor ->:Pledges:->]];
+        }
+        if isinstance(target, Contribution) and jid(target) in mine and target.status == "offered" {
             target.remaining = 0;
+            target.status = "withdrawn";
             log_walker("RetirePledgeWalker", f"retired pledge {self.pledge_id}");
             report self.pledge_id;
         }
@@ -1493,6 +1822,7 @@ walker:protect HelperOfferWalker {
     has reply: str = "";
 
     can start with Root entry {
+        _require_role(["helper"]);
         ensure_commons();
         require_engine("read_helper_offers");
         acct = _my_account();
@@ -1504,10 +1834,11 @@ walker:protect HelperOfferWalker {
         read = read_helper_offers_safe(self.text);
         self.reply = read.reply;
         orgs = [root.shared --> [?:Org]];
-        host = orgs[0] if orgs else None;
 
         for (i, item) in enumerate(read.offers) {
-            kind = item.kind if item.kind in ["food", "goods", "funds", "time"] else "time";
+            kind = item.kind if item.kind in CATEGORY_ORDER else "food";
+            matching_orgs = [o for o in orgs if o.category == kind];
+            host = matching_orgs[0] if matching_orgs else (orgs[0] if orgs else None);
             detail_notes = item.notes;
             if item.details {
                 joined = " | ".join(item.details);
@@ -1516,14 +1847,20 @@ walker:protect HelperOfferWalker {
             contribution = root.shared ++> Contribution(
                 kind=kind,
                 description=item.name + ": " + item.description,
-                capacity=1,
-                remaining=1,
+                capacity=max(1, item.capacity),
+                remaining=0,
                 notes=detail_notes
             );
             grant(contribution, level=WritePerm);
+            for shared_edge in [edge root.shared --> contribution] {
+                grant(shared_edge, level=WritePerm);
+            }
             donor +>:Pledges:+> contribution;
             if host is not None {
                 contribution +>:RoutedThrough:+> host;
+                for route_edge in [edge contribution ->:RoutedThrough:->] {
+                    grant(route_edge, level=WritePerm);
+                }
             }
             report OfferView(
                 id="offer-" + str(i) + "-" + jid(contribution)[-8:],

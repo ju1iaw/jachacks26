@@ -6,7 +6,6 @@ entry-point = "main.jac"
 kind = "web-app"
 jac-version = "==0.34.7"
 
-[dependencies]
 [dependencies.npm]
 react = "^18.2.0"
 react-dom = "^18.2.0"
@@ -72,3 +71,6 @@ temperature = 0.2
 #                    ephemeral on a container platform: every restart drops
 #                    accounts and cases.
 # ---------------------------------------------------------------------------
+
+[dependencies]
+byllm = "~=0.6"

@@ -12,11 +12,15 @@ Two things live here:
 """
 
 import from hashlib { sha256 }
-import requests;
+import hmac;
+import json;
+import os;
+import urllib.parse;
+import urllib.request;
 import from core.graph {
-    Account, Activity, ContactClaim, Contribution, Donor, Need, Org, OrgCard, Person,
+    Account, Activity, ContactClaim, Contribution, Donor, Need, Org, OrgCard, OrgTally, Person,
     PledgeCard, Requirement, Seeded, WalkerTrace, AccountView, EngineReport,
-    RoutedThrough, Pledges, Requires,
+    RoutedThrough, Pledges, Requires, KeepsTally,
     now_iso
 }
 import from core.reason {
@@ -24,7 +28,7 @@ import from core.reason {
 }
 
 
-glob SEED_VERSION: str = "bridge-2026-07-1";
+glob SEED_VERSION: str = "bridge-2026-07-organizations-1";
 glob ACTIVITY_CAP: int = 60;
 
 
@@ -77,18 +81,19 @@ def:pub suggest_addresses(query: str) -> list[dict[str, str]] {
         return [];
     }
     try {
-        response = requests.get(
-            "https://photon.komoot.io/api/",
-            params={
+        query = urllib.parse.urlencode({
                 "q": clean,
                 "limit": 5,
                 "lang": "en"
-            },
-            headers={"User-Agent": "Bridge-Crisis-Navigator/0.1"},
-            timeout=8
+        });
+        request = urllib.request.Request(
+            "https://photon.komoot.io/api/?" + query,
+            headers={"User-Agent": "Bridge-Crisis-Navigator/0.1"}
         );
-        response.raise_for_status();
-        features = response.json()["features"] as list[dict[str, any]];
+        response = urllib.request.urlopen(request, timeout=8);
+        payload = json.loads(response.read().decode("utf-8")) as dict[str, any];
+        response.close();
+        features = payload["features"] as list[dict[str, any]];
         suggestions: list[dict[str, str]] = [];
         for feature in features {
             props = feature["properties"] as dict[str, any];
@@ -205,7 +210,8 @@ def _account_view(acct: Account | None, rep: EngineReport) -> AccountView {
         email=email,
         phone=phone,
         location=location,
-        eligibility_notes=notes
+        eligibility_notes=notes,
+        org_id=acct.org_id if acct is not None else ""
     );
 }
 
@@ -224,11 +230,16 @@ def:protect choose_role(
     contact_value: str = "",
     location: str = ""
 ) -> AccountView {
+    # Organization operators are provisioned with a fixed Account.org_id by a
+    # trusted admin path; public signup cannot self-assert that role.
     clean = role if role in ["seeker", "helper"] else "seeker";
     acct = _my_account();
     if acct is None {
         acct = root ++> Account(role=clean, display_name=display_name);
     } else {
+        if acct.role and acct.role != clean {
+            raise PermissionError("Account role is already set.");
+        }
         acct.role = clean;
         acct.display_name = display_name;
     }
@@ -251,6 +262,36 @@ def:protect choose_role(
     ensure_commons();
     if clean == "helper" and not [root --> [?:Donor]] {
         root ++> Donor(name=display_name);
+    }
+    return _account_view(acct, engine_report());
+}
+
+
+"""Attach a signed-in operator to an organization using a server-held code."""
+def:protect activate_organization(
+    org_id: str,
+    access_code: str
+) -> AccountView {
+    expected = os.environ.get("BRIDGE_ORG_ACCESS_CODE", "");
+    if not expected {
+        raise RuntimeError("Organization access is not configured.");
+    }
+    if not hmac.compare_digest(access_code, expected) {
+        raise PermissionError("Invalid organization access code.");
+    }
+    ensure_commons();
+    org = jobj(org_id);
+    if not isinstance(org, Org) or org not in all_orgs() {
+        raise ValueError("Unknown organization.");
+    }
+    acct = _my_account();
+    if acct is None {
+        raise ValueError("Create an account before activating organization access.");
+    }
+    acct.role = "organization";
+    acct.org_id = jid(org);
+    if not acct.display_name {
+        acct.display_name = org.name;
     }
     return _account_view(acct, engine_report());
 }
@@ -408,7 +449,10 @@ def pledge_cards -> list[PledgeCard] {
             remaining=c.remaining,
             via_org=via[0] if via else "unrouted",
             notes=c.notes,
-            mine=jid(c) in mine
+            mine=jid(c) in mine,
+            status=c.status,
+            confirmed_units=c.confirmed_units,
+            received_units=c.received_units
         ));
     }
     return cards;
@@ -698,6 +742,11 @@ def ensure_commons -> bool {
             tier=spec.tier
         );
         grant(org, level=ConnectPerm);
+        tally = org +>:KeepsTally:+> OrgTally(
+            kind=spec.category,
+            updated_at=now_iso()
+        );
+        grant(tally, level=WritePerm);
         for req in spec.reqs {
             gate = org +>:Requires:+> Requirement(
                 label=req.label,
@@ -718,12 +767,27 @@ def ensure_commons -> bool {
             description=pspec.description,
             capacity=pspec.capacity,
             remaining=pspec.capacity,
-            notes=pspec.notes
+            notes=pspec.notes,
+            status="received",
+            confirmed_units=pspec.capacity,
+            received_units=pspec.capacity,
+            received_at=now_iso()
         );
         grant(pledge, level=WritePerm);
+        for shared_edge in [edge root.shared --> pledge] {
+            grant(shared_edge, level=WritePerm);
+        }
         host = by_name.get(pspec.org);
         if host is not None {
             pledge +>:RoutedThrough:+> host;
+            for route_edge in [edge pledge ->:RoutedThrough:->] {
+                grant(route_edge, level=WritePerm);
+            }
+            tallies = [host ->:KeepsTally:->];
+            if tallies {
+                tallies[0].received += pspec.capacity;
+                tallies[0].updated_at = now_iso();
+            }
         }
     }
 

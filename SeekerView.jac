@@ -218,10 +218,10 @@ def need_to_suggestion(card: NeedCard) -> Suggestion {
         description=card.summary,
         steps=[
             ActionStep(
-                text="A helper has offered to cover this. Accept to track it under Ongoing."
+                text="An organization reserved this help. Accept to claim it and track it under Ongoing."
             ),
             ActionStep(
-                text=card.match_rationale if card.match_rationale else "Waiting on your Accept to confirm this match."
+                text=card.match_rationale if card.match_rationale else "The organization will confirm when it is distributed."
             )
         ],
         kind="helper",
@@ -236,9 +236,11 @@ def:pub SeekerView(
     phone: str = "",
     location: str = "",
     eligibility_notes: str = "",
+    quick_access: bool = True,
     panel: str = "home",
     onHome: Callable[[], None] | None = None,
-    onProfileSaved: Callable[[], None] | None = None
+    onProfileSaved: Callable[[], None] | None = None,
+    onQuickAccessChange: Callable[[bool], None] | None = None
 ) -> JsxElement {
     has situation: str = "";
     has inbox: list[Suggestion] = [];
@@ -263,6 +265,7 @@ def:pub SeekerView(
     has draft_phone: str = "";
     has draft_location: str = "";
     has draft_notes: str = "";
+    has draft_quick_access: bool = True;
     has settings_msg: str = "";
     has settings_err: str = "";
     has settings_busy: bool = False;
@@ -300,6 +303,7 @@ def:pub SeekerView(
     def set_draft_phone(e: ChangeEvent) -> None;
     def set_draft_location(e: ChangeEvent) -> None;
     def set_draft_notes(e: ChangeEvent) -> None;
+    def set_draft_quick_access(e: ChangeEvent) -> None;
 
     async can with entry {
         refresh();
@@ -335,6 +339,26 @@ def:pub SeekerView(
                     <input className="field" value={draft_phone} onChange={set_draft_phone} placeholder="(555) 000-0000"/>
                     <label className="lbl" style={{"marginTop": "12px"}}>Location</label>
                     <input className="field" value={draft_location} onChange={set_draft_location} placeholder="City, neighborhood, or ZIP"/>
+                </div>
+
+                <div className="card settings-card" style={{"marginTop": "14px"}}>
+                    <div className="eyebrow">Sign-in & privacy</div>
+                    <label className="quick-access-choice">
+                        <input
+                            type="checkbox"
+                            checked={draft_quick_access}
+                            onChange={set_draft_quick_access}
+                        />
+                        <span>
+                            <b>Quick access on this device</b>
+                            <small>
+                                Leave Bridge and return without a password. Turn this off on a shared device.
+                            </small>
+                        </span>
+                    </label>
+                    <p className="small muted" style={{"marginTop": "10px"}}>
+                        You can always choose “Sign out completely” to remove access from this device.
+                    </p>
                 </div>
 
                 <div className="card settings-card" style={{"marginTop": "14px"}}>

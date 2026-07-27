@@ -317,6 +317,7 @@ impl SeekerView.open_settings_form -> None {
     draft_phone = phone;
     draft_location = location;
     draft_notes = eligibility_notes;
+    draft_quick_access = quick_access;
     settings_msg = "";
     settings_err = "";
     try {
@@ -352,6 +353,9 @@ impl SeekerView.save_settings -> None {
             draft_location.strip(),
             draft_notes
         );
+        if onQuickAccessChange {
+            onQuickAccessChange(draft_quick_access);
+        }
         settings_msg = "Saved.";
         if onProfileSaved {
             onProfileSaved();
@@ -385,4 +389,9 @@ impl SeekerView.set_draft_location(e: ChangeEvent) -> None {
 
 impl SeekerView.set_draft_notes(e: ChangeEvent) -> None {
     draft_notes = e.target.value;
+}
+
+
+impl SeekerView.set_draft_quick_access(e: ChangeEvent) -> None {
+    draft_quick_access = e.target.checked;
 }

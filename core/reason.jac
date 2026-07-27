@@ -424,6 +424,7 @@ sem next_step_nudge.next_open_step = "The title of the next still-open step in t
 obj HelperOfferItem {
     has name: str;
     has kind: str;
+    has capacity: int;
     has description: str;
     has details: list[str];
     has notes: str = "";
@@ -431,7 +432,8 @@ obj HelperOfferItem {
 
 sem HelperOfferItem = "One concrete service or good a volunteer can offer.";
 sem HelperOfferItem.name = "Short title for the offer, e.g. 'Meal cooking and delivery'. Under 6 words.";
-sem HelperOfferItem.kind = "Exactly one of: 'food', 'goods', 'funds', 'time'.";
+sem HelperOfferItem.kind = "The outcome this offer supports. Exactly one of: 'food', 'shelter', 'legal', 'jobs'. Classify transport, delivery, money, goods, or time by the community need it can practically solve.";
+sem HelperOfferItem.capacity = "A conservative whole-number count of households or service units explicitly offered. Use 1 when quantity is unclear.";
 sem HelperOfferItem.description = "One plain sentence of what they are offering.";
 sem HelperOfferItem.details = "2-4 short bullet lines of specifics from what they said (radius, schedule, quantity, constraints).";
 sem HelperOfferItem.notes = "Constraints only (distance, days, dietary limits). Empty if none.";

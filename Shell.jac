@@ -5,6 +5,7 @@ import from .components.Bits { Brand, Pill }
 import from .Gate { Gate }
 import from .SeekerView { SeekerView }
 import from .HelperView { HelperView }
+import from .OrganizationView { OrganizationView }
 
 sv import from .core.commons { me }
 sv import from .core.graph { AccountView }
@@ -22,9 +23,14 @@ def:pub Shell -> JsxElement {
     has ready: bool = False;
     has signed_in: bool = False;
     has seeker_panel: str = "home";
+    has quick_access: bool = True;
+    has locked: bool = False;
 
     async def load -> None;
     def sign_out(e: MouseEvent) -> None;
+    def sign_out_completely(e: MouseEvent) -> None;
+    def continue_quick_access(e: MouseEvent) -> None;
+    def set_quick_access(enabled: bool) -> None;
     def open_settings(e: MouseEvent) -> None;
     def open_past(e: MouseEvent) -> None;
     def go_home -> None;
@@ -43,6 +49,28 @@ def:pub Shell -> JsxElement {
         return <Gate onReady={load}/>;
     }
 
+    if role == "seeker" and locked {
+        return <div className="quick-lock">
+            <div className="quick-lock-card">
+                <Brand tagline="private support, when you need it"/>
+                <div className="eyebrow" style={{"marginTop": "28px"}}>Quick access</div>
+                <h1>Bridge is ready when you are.</h1>
+                <p className="muted">
+                    Continue without entering a password on this trusted device.
+                </p>
+                <button className="btn primary full" type="button" onClick={continue_quick_access}>
+                    Continue to Bridge
+                </button>
+                <button className="text-btn" type="button" onClick={sign_out_completely}>
+                    Sign out completely
+                </button>
+                <p className="small muted quick-lock-note">
+                    Complete sign-out removes quick access and requires your password next time.
+                </p>
+            </div>
+        </div>;
+    }
+
     if role == "seeker" {
         return <div>
             <div className="topbar seeker-topbar">
@@ -59,8 +87,8 @@ def:pub Shell -> JsxElement {
                     <button
                         className="icon-btn"
                         type="button"
-                        title="Logout"
-                        aria-label="Logout"
+                        title={"Leave Bridge" if quick_access else "Sign out"}
+                        aria-label={"Leave Bridge" if quick_access else "Sign out"}
                         onClick={sign_out}
                     >
                         <span className="icon-glyph" aria-hidden="true">⎋</span>
@@ -88,10 +116,24 @@ def:pub Shell -> JsxElement {
                 phone={phone}
                 location={location}
                 eligibility_notes={eligibility_notes}
+                quick_access={quick_access}
                 panel={seeker_panel}
                 onHome={go_home}
                 onProfileSaved={load}
+                onQuickAccessChange={set_quick_access}
             />
+        </div>;
+    }
+
+    if role == "organization" {
+        return <div>
+            <div className="topbar">
+                <Brand tagline="community operations"/>
+                <div className="spacer"></div>
+                <Pill text={"organization · " + display_name} tone="cool"/>
+                <button className="btn ghost sm" onClick={sign_out_completely}>Sign out</button>
+            </div>
+            <OrganizationView key="org"/>
         </div>;
     }
 

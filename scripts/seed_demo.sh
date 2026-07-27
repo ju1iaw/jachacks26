@@ -47,7 +47,29 @@ for spec in "maria@bridge.demo:seeker:Maria" "sam@bridge.demo:helper:Sam"; do
   set_role "$email" "$token" "$role" "$name"
 done
 
+if [ -n "${BRIDGE_ORG_ACCESS_CODE:-}" ]; then
+  echo "  bayview@bridge.demo -> organization"
+  sam_token="$(login_token "sam@bridge.demo")"
+  org_id="$(
+    curl -s -X POST "$BASE/walker/CommunityBoard" \
+      -H "Authorization: Bearer $sam_token" \
+      -H 'Content-Type: application/json' -d '{}' \
+    | python3 -c 'import sys,json; rows=json.load(sys.stdin)["data"]["reports"][0]["orgs"]; print(next(x["org_id"] for x in rows if x["name"]=="Bayview Free Pantry"))'
+  )"
+  register "bayview@bridge.demo"
+  org_token="$(login_token "bayview@bridge.demo")"
+  set_role "bayview@bridge.demo" "$org_token" "helper" "Bayview team"
+  curl -s -X POST "$BASE/function/activate_organization" \
+    -H "Authorization: Bearer $org_token" -H 'Content-Type: application/json' \
+    -d "{\"org_id\":\"$org_id\",\"access_code\":\"$BRIDGE_ORG_ACCESS_CODE\"}" >/dev/null
+else
+  echo "  organization demo skipped (set BRIDGE_ORG_ACCESS_CODE on server and in this shell)"
+fi
+
 echo
 echo "Demo accounts ready at $BASE"
 echo "  maria@bridge.demo / $PASSWORD   (person in need)"
 echo "  sam@bridge.demo   / $PASSWORD   (volunteer)"
+if [ -n "${BRIDGE_ORG_ACCESS_CODE:-}" ]; then
+  echo "  bayview@bridge.demo / $PASSWORD   (organization)"
+fi

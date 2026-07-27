@@ -10,3 +10,8 @@ dist/
 __pycache__/
 *.pyc
 .pytest_cache/
+.DS_Store
+
+# Local deployment state and generated Vercel upload bundle
+.vercel/
+.vercel-output/
