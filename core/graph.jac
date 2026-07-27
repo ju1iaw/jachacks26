@@ -93,6 +93,11 @@ node AnsweredQuestion {
     Kept on the graph rather than folded away for two reasons: the agent is handed
     the list so it never asks the same thing twice, and the pair is the audit
     trail for *why* a plan changed between two versions.
+
+    An empty `question` is meaningful, not missing data: the person volunteered
+    the detail with nothing open. `answered_trail` renders those as volunteered
+    rather than inventing a question to pair them with, because this list is fed
+    to the caseworker as established fact.
     """
 
     has question: str;
