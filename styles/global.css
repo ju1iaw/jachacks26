@@ -21,6 +21,18 @@
 
 * { box-sizing: border-box; }
 
+/* Smooth in-page jumps (the About Bridge link). This has to sit on the
+   scrolling element -- the document -- not on the page wrapper: putting it on a
+   `min-height: 100vh` div that never scrolls itself does nothing, which is why
+   the anchor used to land instantly. */
+html { scroll-behavior: smooth; }
+
+/* Honour the OS setting. Motion-triggered nausea and vestibular disorders are
+   exactly the kind of thing a crisis service should not inflict on someone. */
+@media (prefers-reduced-motion: reduce) {
+  html { scroll-behavior: auto; }
+}
+
 body {
   margin: 0;
   background: var(--bg);
@@ -328,7 +340,7 @@ ol.suggest-steps.action-checklist li.complete .step-content > span {
 
 /* ---------- role directory ---------- */
 
-.directory-page { min-height: 100vh; background: var(--bg); scroll-behavior: smooth; }
+.directory-page { min-height: 100vh; background: var(--bg); }
 .directory-hero {
   min-height: 100vh; max-width: 940px; margin: 0 auto; padding: 56px 28px 42px;
   display: flex; flex-direction: column; align-items: center; justify-content: center;

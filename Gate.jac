@@ -155,7 +155,7 @@ def:pub Gate(onReady: Callable[[], None]) -> JsxElement {
 
                 <ul className="about-facts">
                     <li>Free to use</li>
-                    <li>An email and password is all you need</li>
+                    <li>No appointment, no waiting room</li>
                     <li>Nothing you write is shared without being anonymized first</li>
                 </ul>
             </section>
