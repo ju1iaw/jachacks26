@@ -23,8 +23,8 @@ esac
 
 BACKEND_URL="${BACKEND_URL%/}"
 
-echo "Installing declared Jac dependencies..."
-jac install
+echo "Installing declared client dependencies..."
+jac install --npm
 
 echo "Building the static client..."
 jac build --client static
