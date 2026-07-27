@@ -168,3 +168,37 @@ test "surplus inventory never creates negative volunteer need" {
     tally = OrgTally(kind="food", received=30, distributed=5);
     assert volunteer_shortfall(tally, 4) == 0;
 }
+
+
+test "a volunteered detail is not recorded as the answer to a question" {
+    # `answered_trail` is handed to the caseworker as `already_answered`, whose
+    # prompt says to treat every line as established fact. Pairing a bare "No"
+    # with a fabricated question gives the model a negation with no referent.
+    person = root ++> Person(alias="p", situation="needs food", created_at=now_iso());
+    person +>:HasAnswer:+> AnsweredQuestion(
+        question="",
+        answer="No -- I lost everything when we left.",
+        at=now_iso()
+    );
+
+    trail = answered_trail(person);
+
+    assert len(trail) == 1;
+    assert "unprompted detail" not in trail[0];
+    assert trail[0].startswith("(volunteered, unprompted)");
+    assert "No -- I lost everything when we left." in trail[0];
+}
+
+
+test "a real question still reads as a question and answer pair" {
+    person = root ++> Person(alias="p", situation="needs food", created_at=now_iso());
+    person +>:HasAnswer:+> AnsweredQuestion(
+        question="Do you have a shelter letter?",
+        answer="No.",
+        at=now_iso()
+    );
+
+    trail = answered_trail(person);
+
+    assert trail[0] == "Do you have a shelter letter? -> No.";
+}

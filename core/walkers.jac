@@ -233,13 +233,24 @@ def strategy_view(cs: CaseStrategy) -> StrategyView {
 }
 
 
-"""Every question already put to this person, oldest first, as "Q -> A"."""
+"""Everything this person has told us, oldest first.
+
+Answers to a question read "Q -> A". Detail they volunteered with no question
+open has no Q to put in front of it, and this is fed verbatim to the caseworker
+as `already_answered` -- which is told to treat every line as established fact.
+A fabricated question there ("(unprompted detail) -> No") hands the model a
+negation with no referent, so volunteered lines say so instead.
+"""
 def answered_trail(person: Person) -> list[str] {
     rows = sorted(
         [person ->:HasAnswer:->],
         key=lambda (a: AnsweredQuestion) -> str { return a.at; }
     );
-    return [f"{a.question} -> {a.answer}" for a in rows];
+    return [
+        f"{a.question} -> {a.answer}" if a.question
+        else f"(volunteered, unprompted) {a.answer}"
+        for a in rows
+    ];
 }
 
 
@@ -954,9 +965,14 @@ walker:protect AnswerWalker {
                 asked = cs.open_question;
             }
         }
-        if not asked {
-            asked = "(unprompted detail)";
-        }
+        # `asked` stays empty when nobody asked anything. Volunteering detail
+        # unprompted is a real thing to do and gets the same full re-plan, but it
+        # is recorded as what it is: inventing a question to hang it on used to
+        # write `In answer to "(unprompted detail)": No -- I lost everything`,
+        # and that string is not just cosmetic. It goes into the intake prose and
+        # into the caseworker's `already_answered`, which is instructed to treat
+        # every line as established fact -- so the model was handed a bare "No"
+        # with nothing to negate and told to trust it.
 
         person +>:HasAnswer:+> AnsweredQuestion(
             question=asked,
@@ -968,7 +984,11 @@ walker:protect AnswerWalker {
         # Fold it into the narrative rather than patching `assets` by hand: the
         # intake role already knows how to turn prose into structured facts, so the
         # answer flows through the same path as everything the person volunteered.
-        enriched = f"{person.situation} In answer to \"{asked}\": {clean}.";
+        enriched = (
+            f"{person.situation} In answer to \"{asked}\": {clean}."
+            if asked
+            else f"{person.situation} They also mentioned: {clean}."
+        );
 
         replan = IntakeWalker(
             situation=enriched, alias=person.alias, emit=False, keep_answers=True

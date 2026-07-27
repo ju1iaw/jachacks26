@@ -276,7 +276,7 @@ def:protect activate_organization(
     if not expected {
         raise RuntimeError("Organization access is not configured.");
     }
-    if not hmac.compare_digest(access_code, expected) {
+    if not hmac.compare_digest(access_code.encode(), expected.encode()) {
         raise PermissionError("Invalid organization access code.");
     }
     ensure_commons();
