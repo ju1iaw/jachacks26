@@ -374,17 +374,94 @@ ol.suggest-steps.action-checklist li.complete .step-content > span {
   padding: 9px 15px; border: 1px solid rgba(255,255,255,.35); border-radius: 999px;
 }
 .about-link:hover { background: rgba(255,255,255,.1); }
-.about-placeholder {
-  max-width: 940px; min-height: 380px; margin: 0 auto; padding: 90px 28px;
+/* ---------- about ----------
+   Breathing room is the brief: one idea per block, nothing competing for the
+   same glance. The numerals carry the sequence so the cards need no rules or
+   borders between them, and the sample card is the only saturated element on
+   the panel -- it is the thing worth looking at. */
+
+.about {
+  max-width: 940px; margin: 0 auto; padding: 96px 28px 88px;
   color: var(--text); background: var(--warm); border-radius: 28px 28px 0 0;
-  text-align: center;
 }
-.about-placeholder h2 { margin: 10px 0 12px; font-size: 34px; }
-.about-placeholder p { max-width: 610px; margin: 0 auto; color: var(--muted); font-size: 16px; }
+.about-head { text-align: center; max-width: 620px; margin: 0 auto; }
+.about h2 {
+  margin: 10px 0 14px; font-size: clamp(30px, 4.4vw, 38px);
+  font-family: var(--brand-sans); font-weight: 700; letter-spacing: -.03em;
+}
+.about-lead { color: var(--muted); font-size: 17px; line-height: 1.6; }
+
+.about-grid {
+  margin-top: 64px; display: grid; grid-template-columns: repeat(3, 1fr); gap: 40px 34px;
+}
+.about-card { display: flex; flex-direction: column; gap: 10px; }
+.about-mark {
+  font-family: var(--brand-sans); font-size: 12px; font-weight: 720;
+  letter-spacing: .12em; color: var(--cool-dim);
+  padding-bottom: 10px; border-bottom: 1px solid var(--warm-dim);
+}
+.about-card h3 {
+  margin-top: 4px; font-size: 18px; line-height: 1.3;
+  font-family: var(--brand-sans); font-weight: 700; letter-spacing: -.02em;
+}
+.about-card p { color: var(--muted); font-size: 14.5px; line-height: 1.6; }
+
+.about-proof {
+  margin-top: 72px; display: grid; grid-template-columns: 1fr 1fr;
+  gap: 34px; align-items: center;
+}
+.about-proof-copy p { color: var(--muted); font-size: 15.5px; line-height: 1.6; margin-top: 10px; }
+.about-proof-note {
+  padding-left: 14px; border-left: 2px solid var(--warm-dim);
+  font-style: italic;
+}
+.about-proof-card {
+  background: var(--panel); border-radius: 18px; padding: 20px 22px;
+  border: 1px solid rgba(36,75,85,.10);
+  box-shadow: 0 20px 44px rgba(28,59,66,.16);
+  transform: rotate(-1.1deg);
+}
+.about-proof-top { display: flex; align-items: center; justify-content: space-between; }
+.about-proof-tag {
+  font-family: var(--brand-sans); font-size: 11px; font-weight: 720;
+  text-transform: uppercase; letter-spacing: .09em; color: var(--cool-dim);
+}
+.about-proof-code {
+  font-family: var(--mono); font-size: 11px; color: var(--line);
+}
+.about-proof-line { margin-top: 12px; font-size: 16px; line-height: 1.5; }
+.about-proof-chips { display: flex; flex-wrap: wrap; gap: 7px; margin-top: 16px; }
+.about-proof-chips span {
+  font-family: var(--brand-sans); font-size: 11px; font-weight: 650;
+  padding: 4px 10px; border-radius: 999px;
+  color: var(--cool-dim); background: var(--warm);
+}
+
+.about-facts {
+  margin: 72px 0 0; padding: 22px 0 0; list-style: none;
+  border-top: 1px solid var(--warm-dim);
+  display: flex; flex-wrap: wrap; justify-content: center; gap: 10px 30px;
+  color: var(--muted); font-size: 13.5px;
+}
+.about-facts li { display: flex; align-items: center; gap: 10px; }
+.about-facts li + li::before {
+  content: ""; width: 4px; height: 4px; border-radius: 50%;
+  background: var(--warm-dim); margin-right: 20px;
+}
+
+@media (max-width: 860px) {
+  .about-grid { grid-template-columns: 1fr; gap: 34px; }
+  .about-proof { grid-template-columns: 1fr; gap: 26px; }
+  .about-proof-card { transform: none; }
+}
 @media (max-width: 680px) {
   .directory-actions { grid-template-columns: 1fr; }
   .directory-logo { height: 140px; }
   .directory-name { margin-top: -10px; }
+  .about { padding: 68px 22px 64px; }
+  .about-grid, .about-proof, .about-facts { margin-top: 48px; }
+  .about-facts { flex-direction: column; align-items: center; gap: 10px; }
+  .about-facts li + li::before { display: none; }
 }
 
 .role-opt {

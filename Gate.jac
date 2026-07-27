@@ -82,13 +82,82 @@ def:pub Gate(onReady: Callable[[], None]) -> JsxElement {
                 </div>
                 <a className="about-link" href="#about-bridge">About Bridge <span>↓</span></a>
             </section>
-            <section className="about-placeholder" id="about-bridge">
-                <div className="eyebrow">About Bridge</div>
-                <h2>Help should be easier to reach.</h2>
-                <p>
-                    Bridge privately connects people with nearby organizations and
-                    community support, turning a difficult moment into a clear next step.
-                </p>
+            <section className="about" id="about-bridge">
+                <div className="about-head">
+                    <div className="eyebrow">About Bridge</div>
+                    <h2>Help should be easier to reach.</h2>
+                    <p className="about-lead">
+                        Bridge privately connects people with nearby organizations and
+                        community support, turning a difficult moment into a clear next step.
+                    </p>
+                </div>
+
+                <div className="about-grid">
+                    <article className="about-card">
+                        <span className="about-mark">01</span>
+                        <h3>Volunteers never see who you are</h3>
+                        <p>
+                            They see one line: what is needed, household size, and a
+                            three-digit ZIP area. No name, no address, no contact details.
+                            A second AI pass audits that summary for anything identifying
+                            before it is published — and Bridge will never ask where you live.
+                        </p>
+                    </article>
+                    <article className="about-card">
+                        <span className="about-mark">02</span>
+                        <h3>The match finds itself</h3>
+                        <p>
+                            Volunteers offer what they have through a local organization.
+                            People describe what they need. When the two genuinely fit,
+                            Bridge connects them — nobody presses a button, and the two
+                            sides never contact each other directly.
+                        </p>
+                    </article>
+                    <article className="about-card">
+                        <span className="about-mark">03</span>
+                        <h3>You learn what is blocking you first</h3>
+                        <p>
+                            Bridge looks up what each organization actually requires at the
+                            door, then puts the step that unblocks you in front of it —
+                            “ask the front desk for a signed letter”, not “proof of address
+                            required”.
+                        </p>
+                    </article>
+                </div>
+
+                <div className="about-proof">
+                    <div className="about-proof-copy">
+                        <div className="eyebrow">What a volunteer sees</div>
+                        <p>
+                            This is the whole record someone offering help works from.
+                            Everything else stays with you.
+                        </p>
+                        <p className="about-proof-note">
+                            Fit means usable, not just the same category — a pledge of dry
+                            rice and beans is never offered to a household with no stove.
+                        </p>
+                    </div>
+                    <div className="about-proof-card" aria-hidden="true">
+                        <div className="about-proof-top">
+                            <span className="about-proof-tag">food</span>
+                            <span className="about-proof-code">N-7291</span>
+                        </div>
+                        <p className="about-proof-line">
+                            Needs groceries. Household of 3; no car, no stove access.
+                        </p>
+                        <div className="about-proof-chips">
+                            <span>no name</span>
+                            <span>no address</span>
+                            <span>ZIP area only</span>
+                        </div>
+                    </div>
+                </div>
+
+                <ul className="about-facts">
+                    <li>Free to use</li>
+                    <li>An email and password is all you need</li>
+                    <li>Nothing you write is shared without being anonymized first</li>
+                </ul>
             </section>
         </div>;
     }
