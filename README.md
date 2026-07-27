@@ -14,12 +14,12 @@ someone who can give it. Built entirely in [Jac](https://docs.jaseci.org/).
 open http://localhost:8000
 ```
 
-Two demo accounts, password `bridge1234` for both:
+Two demo accounts:
 
-| login | side |
-|---|---|
-| `maria@bridge.demo` | **person in need** — describes a situation, gets a live plan |
-| `sam@bridge.demo` | **volunteer / donor** — sees anonymized needs, pledges, matches |
+| login | access | side |
+|---|---|---|
+| `maria@bridge.demo` | email only | **person in need** — describes a situation, gets a live plan |
+| `sam@bridge.demo` | password `bridge1234` | **volunteer / donor** — sees anonymized needs, pledges, matches |
 
 Open them in **two different browser profiles** (or one normal + one private
 window) so both sessions are live at once — that's the demo.

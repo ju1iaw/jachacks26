@@ -1,5 +1,80 @@
 """Handlers for the auth gate."""
 
+impl Gate.submit_seeker_email -> None {
+    clean = email.strip().lower();
+    parts = clean.split("@");
+    if (
+        len(parts) != 2
+        or not parts[0]
+        or "." not in parts[1]
+        or parts[1].startswith(".")
+        or parts[1].endswith(".")
+        or " " in clean
+    ) {
+        error = "Enter a valid email address.";
+        return;
+    }
+
+    email = clean;
+    busy = True;
+    error = "";
+    notice = "";
+    passwordless_ok: bool = False;
+    try {
+        passwordless_ok = await jacLogin(
+            {"type": "email", "value": clean},
+            seeker_email_credential(clean)
+        );
+    } except Exception {
+        passwordless_ok = False;
+    }
+
+    if passwordless_ok {
+        account: AccountView | None = None;
+        try {
+            account = await me();
+        } except Exception {
+            account = None;
+        }
+        if account is not None and account.role == "seeker" {
+            busy = False;
+            onReady();
+            return;
+        }
+        jacLogout();
+        if account is not None and account.role == "helper" {
+            busy = False;
+            error = "That account belongs in the volunteer portal.";
+            return;
+        }
+    }
+
+    exists: bool = False;
+    try {
+        exists = await contact_registered("email", clean);
+    } except Exception {
+        busy = False;
+        error = "We couldn’t check that email right now. Please try again.";
+        return;
+    }
+    busy = False;
+    if exists {
+        login_stage = "password";
+        password = "";
+        return;
+    }
+
+    account_method = "email";
+    contact_method = "email";
+    contact_value = clean;
+    display_name = "";
+    password = seeker_email_credential(clean);
+    mode = "signup";
+    stage = "name";
+    notice = "No account found — let’s create one.";
+}
+
+
 impl Gate.do_login -> None {
     ok: bool = False;
     account: AccountView | None = None;
@@ -18,7 +93,7 @@ impl Gate.do_login -> None {
             return;
         }
     } else {
-        phone_digits = "".join([char for char in clean_login if char.isdigit()]);
+        phone_digits = digits_only(clean_login);
         if len(phone_digits) < 10 or len(phone_digits) > 15 {
             error = "Enter a valid phone number with 10 to 15 digits.";
             return;
@@ -30,7 +105,7 @@ impl Gate.do_login -> None {
         # Jac supports email and username identities. Phone accounts use their
         # normalized phone number as the username identity.
         identity_type = "email" if login_method == "email" else "username";
-        phone_login = "".join([char for char in email if char.isdigit()]);
+        phone_login = digits_only(email);
         identity_value = email.strip().lower() if login_method == "email" else phone_login;
         ok = await jacLogin({"type": identity_type, "value": identity_value}, password);
     } except Exception {
@@ -59,6 +134,14 @@ impl Gate.do_login -> None {
         );
         return;
     }
+    if selected_role == "seeker" {
+        try {
+            _ = await set_password_enabled(True);
+        } except Exception {
+            # Login detection does not depend on this display-only preference.
+            _ = None;
+        }
+    }
     onReady();
 }
 
@@ -71,10 +154,14 @@ impl Gate.finish_signup -> None {
     auth_value = (
         clean_identity.lower()
         if account_method == "email"
-        else "".join([char for char in clean_identity if char.isdigit()])
+        else digits_only(clean_identity)
     );
     auth_identity = {"type": auth_type, "value": auth_value};
-    auth_password = password;
+    auth_password = (
+        seeker_email_credential(auth_value)
+        if selected_role == "seeker"
+        else password
+    );
     busy = True;
     error = "";
     if account_method == "email" and (not auth_value or "@" not in auth_value) {
@@ -89,7 +176,7 @@ impl Gate.finish_signup -> None {
         stage = "account";
         return;
     }
-    if len(auth_password) < 8 {
+    if selected_role != "seeker" and len(auth_password) < 8 {
         busy = False;
         error = "Password needs at least 8 characters.";
         stage = "account";
@@ -142,6 +229,8 @@ impl Gate.finish_signup -> None {
 impl Gate.start_signup(e: MouseEvent) -> None {
     mode = "signup";
     stage = "name";
+    login_stage = "email";
+    notice = "";
     error = "";
 }
 
@@ -149,6 +238,15 @@ impl Gate.choose_seeker(e: MouseEvent) -> None {
     selected_role = "seeker";
     mode = "login";
     stage = "creds";
+    login_stage = "email";
+    login_method = "email";
+    account_method = "email";
+    email = "";
+    password = "";
+    display_name = "";
+    contact_method = "email";
+    contact_value = "";
+    notice = "";
     error = "";
 }
 
@@ -156,12 +254,19 @@ impl Gate.choose_helper(e: MouseEvent) -> None {
     selected_role = "helper";
     mode = "login";
     stage = "creds";
+    login_stage = "email";
+    email = "";
+    password = "";
+    display_name = "";
+    contact_value = "";
+    notice = "";
     error = "";
 }
 
 impl Gate.back_to_directory(e: MouseEvent) -> None {
     mode = "directory";
     selected_role = "";
+    notice = "";
     error = "";
 }
 
@@ -169,12 +274,18 @@ impl Gate.back_to_directory(e: MouseEvent) -> None {
 impl Gate.to_signup(e: MouseEvent) -> None {
     mode = "signup";
     stage = "name";
+    login_stage = "email";
+    notice = "";
     error = "";
 }
 
 impl Gate.next_name(e: MouseEvent) -> None {
     if display_name.strip() {
-        stage = "account";
+        stage = "location" if selected_role == "seeker" else "account";
+        if selected_role == "seeker" and not contact_value.strip() {
+            contact_method = "email";
+            contact_value = email;
+        }
         error = "";
     }
 }
@@ -190,7 +301,7 @@ impl Gate.next_account(e: MouseEvent) -> None {
         }
         email = addr;
     } else {
-        phone_digits = "".join([char for char in clean_identity if char.isdigit()]);
+        phone_digits = digits_only(clean_identity);
         if len(phone_digits) < 10 or len(phone_digits) > 15 {
             error = "Enter a valid phone number with 10 to 15 digits.";
             return;
@@ -227,7 +338,7 @@ impl Gate.next_contact -> None {
                 return;
             }
         } else {
-            phone_digits = "".join([char for char in clean_contact if char.isdigit()]);
+            phone_digits = digits_only(clean_contact);
             if len(phone_digits) < 10 or len(phone_digits) > 15 {
                 error = "Enter a valid phone number with 10 to 15 digits, or skip for now.";
                 return;
@@ -342,5 +453,8 @@ impl Gate.skip_location(e: MouseEvent) -> None {
 impl Gate.back_to_login(e: MouseEvent) -> None {
     mode = "login";
     stage = "creds";
+    login_stage = "email";
+    password = "";
+    notice = "";
     error = "";
 }

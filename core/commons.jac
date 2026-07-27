@@ -211,7 +211,8 @@ def _account_view(acct: Account | None, rep: EngineReport) -> AccountView {
         phone=phone,
         location=location,
         eligibility_notes=notes,
-        org_id=acct.org_id if acct is not None else ""
+        org_id=acct.org_id if acct is not None else "",
+        password_enabled=acct.password_enabled if acct is not None else False
     );
 }
 
@@ -260,9 +261,29 @@ def:protect choose_role(
         acct.phone = contact_value;
     }
     ensure_commons();
-    if clean == "helper" and not [root --> [?:Donor]] {
-        root ++> Donor(name=display_name);
+    if clean == "helper" {
+        acct.password_enabled = True;
+        if not [root --> [?:Donor]] {
+            root ++> Donor(name=display_name);
+        }
     }
+    return _account_view(acct, engine_report());
+}
+
+
+"""Record whether a seeker chose a real password.
+
+Login does not trust this flag to authenticate; it only drives Settings copy.
+The email-first Gate always tries the email-only credential and falls back to
+the password screen when that fails, so an interrupted metadata update cannot
+lock anyone out.
+"""
+def:protect set_password_enabled(enabled: bool) -> AccountView {
+    acct = _my_account();
+    if acct is None or acct.role != "seeker" {
+        raise PermissionError("Password preferences are only available to support accounts.");
+    }
+    acct.password_enabled = enabled;
     return _account_view(acct, engine_report());
 }
 

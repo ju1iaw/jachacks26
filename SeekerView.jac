@@ -6,11 +6,12 @@ offers that are not yet redeemed also land under Ongoing.
 """
 
 import from react { useEffect }
+import from .components.Auth { seeker_email_credential }
 import from .components.Suggestions {
     OngoingPanel, SuggestionCard, WorkingLabel
 }
 
-sv import from .core.commons { me, update_profile }
+sv import from .core.commons { me, set_password_enabled, update_profile }
 sv import from .core.graph {
     NeedCard, PlanStep, SeekerBoard
 }
@@ -236,11 +237,10 @@ def:pub SeekerView(
     phone: str = "",
     location: str = "",
     eligibility_notes: str = "",
-    quick_access: bool = True,
+    password_enabled: bool = False,
     panel: str = "home",
     onHome: Callable[[], None] | None = None,
-    onProfileSaved: Callable[[], None] | None = None,
-    onQuickAccessChange: Callable[[bool], None] | None = None
+    onProfileSaved: Callable[[], None] | None = None
 ) -> JsxElement {
     has situation: str = "";
     has inbox: list[Suggestion] = [];
@@ -265,7 +265,10 @@ def:pub SeekerView(
     has draft_phone: str = "";
     has draft_location: str = "";
     has draft_notes: str = "";
-    has draft_quick_access: bool = True;
+    has draft_password_enabled: bool = False;
+    has current_password: str = "";
+    has new_password: str = "";
+    has confirm_password: str = "";
     has settings_msg: str = "";
     has settings_err: str = "";
     has settings_busy: bool = False;
@@ -298,12 +301,12 @@ def:pub SeekerView(
     async def apply_clarify(ans: str) -> None;
     async def open_settings_form -> None;
     async def save_settings -> None;
+    async def save_password -> None;
+    async def remove_password -> None;
     def set_draft_name(e: ChangeEvent) -> None;
-    def set_draft_email(e: ChangeEvent) -> None;
     def set_draft_phone(e: ChangeEvent) -> None;
     def set_draft_location(e: ChangeEvent) -> None;
     def set_draft_notes(e: ChangeEvent) -> None;
-    def set_draft_quick_access(e: ChangeEvent) -> None;
 
     async can with entry {
         refresh();
@@ -334,7 +337,10 @@ def:pub SeekerView(
                     <label className="lbl" style={{"marginTop": "14px"}}>Name</label>
                     <input className="field" value={draft_name} onChange={set_draft_name} placeholder="Your name"/>
                     <label className="lbl" style={{"marginTop": "12px"}}>Email</label>
-                    <input className="field" value={draft_email} onChange={set_draft_email} placeholder="you@example.com"/>
+                    <input className="field" value={draft_email} disabled={True} placeholder="you@example.com"/>
+                    <p className="small muted" style={{"marginTop": "6px"}}>
+                        This is your sign-in email. Contact support if it needs to change.
+                    </p>
                     <label className="lbl" style={{"marginTop": "12px"}}>Phone number</label>
                     <input className="field" value={draft_phone} onChange={set_draft_phone} placeholder="(555) 000-0000"/>
                     <label className="lbl" style={{"marginTop": "12px"}}>Location</label>
@@ -343,22 +349,63 @@ def:pub SeekerView(
 
                 <div className="card settings-card" style={{"marginTop": "14px"}}>
                     <div className="eyebrow">Sign-in & privacy</div>
-                    <label className="quick-access-choice">
-                        <input
-                            type="checkbox"
-                            checked={draft_quick_access}
-                            onChange={set_draft_quick_access}
-                        />
-                        <span>
-                            <b>Quick access on this device</b>
-                            <small>
-                                Leave Bridge and return without a password. Turn this off on a shared device.
-                            </small>
-                        </span>
-                    </label>
-                    <p className="small muted" style={{"marginTop": "10px"}}>
-                        You can always choose “Sign out completely” to remove access from this device.
+                    <h2 className="settings-subhead">
+                        {"Password is on" if draft_password_enabled else "Password is optional"}
+                    </h2>
+                    <p className="small muted" style={{"marginTop": "8px", "marginBottom": "12px"}}>
+                        {
+                            "Enter your current password to change it or return to email-only access."
+                            if draft_password_enabled
+                            else "With email-only access, anyone who knows your email could open this account. Add a password for more privacy."
+                        }
                     </p>
+                    {if draft_password_enabled {
+                        <div key="current-password">
+                            <label className="lbl">Current password</label>
+                            <input
+                                className="field"
+                                type="password"
+                                value={current_password}
+                                autocomplete="current-password"
+                                onChange={lambda (e: ChangeEvent) { current_password = e.target.value; }}
+                            />
+                        </div>
+                    }}
+                    <label className="lbl" style={{"marginTop": "12px"}}>
+                        {"New password" if draft_password_enabled else "Choose a password"}
+                    </label>
+                    <input
+                        className="field"
+                        type="password"
+                        value={new_password}
+                        autocomplete="new-password"
+                        placeholder="At least 8 characters"
+                        onChange={lambda (e: ChangeEvent) { new_password = e.target.value; }}
+                    />
+                    <label className="lbl" style={{"marginTop": "12px"}}>Confirm password</label>
+                    <input
+                        className="field"
+                        type="password"
+                        value={confirm_password}
+                        autocomplete="new-password"
+                        onChange={lambda (e: ChangeEvent) { confirm_password = e.target.value; }}
+                    />
+                    <div className="row password-actions" style={{"marginTop": "14px"}}>
+                        <button className="btn primary" type="button" onClick={save_password} disabled={settings_busy}>
+                            {"Change password" if draft_password_enabled else "Add password"}
+                        </button>
+                        {if draft_password_enabled {
+                            <button
+                                className="btn ghost"
+                                key="remove-password"
+                                type="button"
+                                onClick={remove_password}
+                                disabled={settings_busy}
+                            >
+                                Use email only
+                            </button>
+                        }}
+                    </div>
                 </div>
 
                 <div className="card settings-card" style={{"marginTop": "14px"}}>

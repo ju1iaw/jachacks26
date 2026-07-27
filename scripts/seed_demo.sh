@@ -10,19 +10,22 @@
 set -uo pipefail
 BASE="${BRIDGE_URL:-http://localhost:8000}"
 PASSWORD="bridge1234"
+SEEKER_PASSWORD="bridge::seeker::email-only::maria@bridge.demo"
 
 register() {
+  local password="${2:-$PASSWORD}"
   curl -s -X POST "$BASE/user/register" \
     -H 'Content-Type: application/json' \
     -d "{\"identities\":[{\"type\":\"email\",\"value\":\"$1\"}],
-         \"credential\":{\"type\":\"password\",\"password\":\"$PASSWORD\"}}" >/dev/null
+         \"credential\":{\"type\":\"password\",\"password\":\"$password\"}}" >/dev/null
 }
 
 login_token() {
+  local password="${2:-$PASSWORD}"
   curl -s -X POST "$BASE/user/login" \
     -H 'Content-Type: application/json' \
     -d "{\"identity\":{\"type\":\"email\",\"value\":\"$1\"},
-         \"credential\":{\"type\":\"password\",\"password\":\"$PASSWORD\"}}" \
+         \"credential\":{\"type\":\"password\",\"password\":\"$password\"}}" \
     | python3 -c 'import sys,json; print(json.load(sys.stdin)["data"]["token"])'
 }
 
@@ -35,21 +38,26 @@ set_role() {
 echo "seeding the commons..."
 curl -s -X POST "$BASE/function/bootstrap" -H 'Content-Type: application/json' -d '{}' >/dev/null
 
-for spec in "maria@bridge.demo:seeker:Maria" "sam@bridge.demo:helper:Sam"; do
-  IFS=":" read -r email role name <<< "$spec"
-  echo "  $email -> $role"
-  register "$email"
-  token="$(login_token "$email")"
-  if [ -z "$token" ]; then
-    echo "    ! could not log in as $email"
-    continue
-  fi
-  set_role "$email" "$token" "$role" "$name"
-done
+echo "  maria@bridge.demo -> seeker (email-only)"
+register "maria@bridge.demo" "$SEEKER_PASSWORD"
+maria_token="$(login_token "maria@bridge.demo" "$SEEKER_PASSWORD")"
+if [ -n "$maria_token" ]; then
+  set_role "maria@bridge.demo" "$maria_token" "seeker" "Maria"
+else
+  echo "    ! could not log in as maria@bridge.demo"
+fi
+
+echo "  sam@bridge.demo -> helper"
+register "sam@bridge.demo"
+sam_token="$(login_token "sam@bridge.demo")"
+if [ -n "$sam_token" ]; then
+  set_role "sam@bridge.demo" "$sam_token" "helper" "Sam"
+else
+  echo "    ! could not log in as sam@bridge.demo"
+fi
 
 if [ -n "${BRIDGE_ORG_ACCESS_CODE:-}" ]; then
   echo "  bayview@bridge.demo -> organization"
-  sam_token="$(login_token "sam@bridge.demo")"
   org_id="$(
     curl -s -X POST "$BASE/walker/CommunityBoard" \
       -H "Authorization: Bearer $sam_token" \
@@ -68,7 +76,7 @@ fi
 
 echo
 echo "Demo accounts ready at $BASE"
-echo "  maria@bridge.demo / $PASSWORD   (person in need)"
+echo "  maria@bridge.demo                (person in need, email-only)"
 echo "  sam@bridge.demo   / $PASSWORD   (volunteer)"
 if [ -n "${BRIDGE_ORG_ACCESS_CODE:-}" ]; then
   echo "  bayview@bridge.demo / $PASSWORD   (organization)"

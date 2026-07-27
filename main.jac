@@ -12,7 +12,8 @@ no client has any reason to hit.
 """
 
 import from core.commons {
-    activate_organization, bootstrap, choose_role, me, update_profile
+    activate_organization, bootstrap, choose_role, contact_registered, me,
+    set_password_enabled, suggest_addresses, update_profile
 }
 import from core.graph {
     AccountView, CommunityView, EngineReport, NeedCard, OfferView, OrgCard,

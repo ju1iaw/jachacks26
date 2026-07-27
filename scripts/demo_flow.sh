@@ -12,12 +12,14 @@ set -uo pipefail
 cd "$(dirname "$0")/.."
 BASE="${BRIDGE_URL:-http://localhost:8000}"
 PASSWORD="bridge1234"
+SEEKER_PASSWORD="bridge::seeker::email-only::maria@bridge.demo"
 FMT="python3 scripts/_fmt.py"
 
 tok() {
+  local password="${2:-$PASSWORD}"
   curl -s -X POST "$BASE/user/login" -H 'Content-Type: application/json' \
     -d "{\"identity\":{\"type\":\"email\",\"value\":\"$1\"},
-         \"credential\":{\"type\":\"password\",\"password\":\"$PASSWORD\"}}" \
+         \"credential\":{\"type\":\"password\",\"password\":\"$password\"}}" \
     | python3 -c 'import sys,json; print(json.load(sys.stdin)["data"]["token"])'
 }
 
@@ -28,7 +30,7 @@ spawn() { # spawn <token> <Walker> <json-body>
 
 hr() { printf '\n\033[1m== %s\033[0m\n' "$1"; }
 
-MARIA="$(tok maria@bridge.demo)"
+MARIA="$(tok maria@bridge.demo "$SEEKER_PASSWORD")"
 SAM="$(tok sam@bridge.demo)"
 if [ -z "$MARIA" ] || [ -z "$SAM" ]; then
   echo "Could not log in. Run ./scripts/seed_demo.sh first."

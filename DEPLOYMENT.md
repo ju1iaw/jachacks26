@@ -85,7 +85,7 @@ Exercise login through the Vercel domain to verify the rewrite:
 curl -fsS -X POST \
   https://YOUR-APP.vercel.app/user/login \
   -H 'Content-Type: application/json' \
-  -d '{"identity":"maria@bridge.demo","credential":"bridge1234"}'
+  -d '{"identity":{"type":"email","value":"maria@bridge.demo"},"credential":{"type":"password","password":"bridge::seeker::email-only::maria@bridge.demo"}}'
 ```
 
 Then verify intake, pledging, matching, and state persistence across a backend

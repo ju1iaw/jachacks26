@@ -12,6 +12,29 @@ def _ref_sugs(ref: Ref[list[Suggestion]]) -> list[Suggestion] {
 }
 
 
+async def _change_auth_password(current: str, replacement: str) -> bool {
+    token = (window as any).localStorage.getItem("jac_token");
+    if not token {
+        return False;
+    }
+    response = await fetch(
+        "/user/password",
+        {
+            "method": "PUT",
+            "headers": {
+                "Content-Type": "application/json",
+                "Authorization": "Bearer " + token
+            },
+            "body": JSON.stringify({
+                "current_password": current,
+                "new_password": replacement
+            })
+        }
+    );
+    return response.ok;
+}
+
+
 impl SeekerView.apply(board: SeekerBoard) -> int {
     # Pre-intake poll boards have no Person yet. Applying them would wipe
     # suggestions (and used to crash when nested lists were missing on the wire).
@@ -317,7 +340,10 @@ impl SeekerView.open_settings_form -> None {
     draft_phone = phone;
     draft_location = location;
     draft_notes = eligibility_notes;
-    draft_quick_access = quick_access;
+    draft_password_enabled = password_enabled;
+    current_password = "";
+    new_password = "";
+    confirm_password = "";
     settings_msg = "";
     settings_err = "";
     try {
@@ -328,6 +354,7 @@ impl SeekerView.open_settings_form -> None {
             draft_phone = account.phone if account.phone else draft_phone;
             draft_location = account.location if account.location else draft_location;
             draft_notes = account.eligibility_notes if account.eligibility_notes else draft_notes;
+            draft_password_enabled = account.password_enabled;
         }
     } except Exception {
         # Props are enough to edit offline of a failed refresh.
@@ -353,9 +380,6 @@ impl SeekerView.save_settings -> None {
             draft_location.strip(),
             draft_notes
         );
-        if onQuickAccessChange {
-            onQuickAccessChange(draft_quick_access);
-        }
         settings_msg = "Saved.";
         if onProfileSaved {
             onProfileSaved();
@@ -367,13 +391,95 @@ impl SeekerView.save_settings -> None {
 }
 
 
-impl SeekerView.set_draft_name(e: ChangeEvent) -> None {
-    draft_name = e.target.value;
+impl SeekerView.save_password -> None {
+    if len(new_password) < 8 {
+        settings_err = "Password needs at least 8 characters.";
+        settings_msg = "";
+        return;
+    }
+    if new_password != confirm_password {
+        settings_err = "Those passwords don’t match.";
+        settings_msg = "";
+        return;
+    }
+    if draft_password_enabled and not current_password {
+        settings_err = "Enter your current password first.";
+        settings_msg = "";
+        return;
+    }
+
+    settings_busy = True;
+    settings_err = "";
+    settings_msg = "";
+    old = (
+        current_password
+        if draft_password_enabled
+        else seeker_email_credential(draft_email)
+    );
+    try {
+        changed = await _change_auth_password(old, new_password);
+        if not changed {
+            settings_err = (
+                "Current password was not accepted."
+                if draft_password_enabled
+                else "Could not add that password. Sign out and try your email again."
+            );
+            settings_busy = False;
+            return;
+        }
+        _ = await set_password_enabled(True);
+        draft_password_enabled = True;
+        current_password = "";
+        new_password = "";
+        confirm_password = "";
+        settings_msg = "Password protection is on.";
+        if onProfileSaved {
+            onProfileSaved();
+        }
+    } except Exception {
+        settings_err = "Password changed, but Bridge could not refresh this setting. Sign in again to continue.";
+    }
+    settings_busy = False;
 }
 
 
-impl SeekerView.set_draft_email(e: ChangeEvent) -> None {
-    draft_email = e.target.value;
+impl SeekerView.remove_password -> None {
+    if not current_password {
+        settings_err = "Enter your current password first.";
+        settings_msg = "";
+        return;
+    }
+    settings_busy = True;
+    settings_err = "";
+    settings_msg = "";
+    try {
+        changed = await _change_auth_password(
+            current_password,
+            seeker_email_credential(draft_email)
+        );
+        if not changed {
+            settings_err = "Current password was not accepted.";
+            settings_busy = False;
+            return;
+        }
+        _ = await set_password_enabled(False);
+        draft_password_enabled = False;
+        current_password = "";
+        new_password = "";
+        confirm_password = "";
+        settings_msg = "Email-only access is on.";
+        if onProfileSaved {
+            onProfileSaved();
+        }
+    } except Exception {
+        settings_err = "Password was removed, but Bridge could not refresh this setting. Sign in again to continue.";
+    }
+    settings_busy = False;
+}
+
+
+impl SeekerView.set_draft_name(e: ChangeEvent) -> None {
+    draft_name = e.target.value;
 }
 
 
@@ -389,9 +495,4 @@ impl SeekerView.set_draft_location(e: ChangeEvent) -> None {
 
 impl SeekerView.set_draft_notes(e: ChangeEvent) -> None {
     draft_notes = e.target.value;
-}
-
-
-impl SeekerView.set_draft_quick_access(e: ChangeEvent) -> None {
-    draft_quick_access = e.target.checked;
 }

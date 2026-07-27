@@ -7,9 +7,12 @@ graph, not anyone else's.
 
 import from "@jac/runtime" { jacLogin, jacLogout, jacSignup }
 import from react { useEffect, useRef }
+import from .components.Auth { digits_only, seeker_email_credential }
 import from .components.Bits { Brand }
 
-sv import from .core.commons { choose_role, contact_registered, me, suggest_addresses }
+sv import from .core.commons {
+    choose_role, contact_registered, me, set_password_enabled, suggest_addresses
+}
 sv import from .core.graph { AccountView }
 
 
@@ -20,6 +23,7 @@ def:pub Gate(onReady: Callable[[], None]) -> JsxElement {
     has account_method: str = "email";
     has email: str = "";
     has password: str = "";
+    has login_stage: str = "email";
     has display_name: str = "";
     has stage: str = "creds";
     has contact_method: str = "email";
@@ -33,9 +37,11 @@ def:pub Gate(onReady: Callable[[], None]) -> JsxElement {
     has searching_address: bool = False;
     has busy: bool = False;
     has error: str = "";
+    has notice: str = "";
     search_sequence: any = useRef(0);
 
     async def do_login -> None;
+    async def submit_seeker_email -> None;
     async def finish_signup -> None;
     def start_signup(e: MouseEvent) -> None;
     def choose_seeker(e: MouseEvent) -> None;
@@ -155,7 +161,7 @@ def:pub Gate(onReady: Callable[[], None]) -> JsxElement {
 
                 <ul className="about-facts">
                     <li>Free to use</li>
-                    <li>An email and password is all you need</li>
+                    <li>People seeking help can start with just an email</li>
                     <li>Nothing you write is shared without being anonymized first</li>
                 </ul>
             </section>
@@ -178,13 +184,26 @@ def:pub Gate(onReady: Callable[[], None]) -> JsxElement {
 
                     <div className="progress" aria-label="Signup progress">
                         <span className={"active" if stage == "name" else "done"}></span>
-                        <span className={"active" if stage == "account" else ("done" if stage in ["contact", "location"] else "")}></span>
-                        <span className={"active" if stage == "contact" else ("done" if stage == "location" else "")}></span>
+                        {if selected_role == "helper" {
+                            <span
+                                key="account-progress"
+                                className={"active" if stage == "account" else ("done" if stage in ["contact", "location"] else "")}
+                            ></span>
+                        }}
+                        {if selected_role == "helper" {
+                            <span
+                                key="contact-progress"
+                                className={"active" if stage == "contact" else ("done" if stage == "location" else "")}
+                            ></span>
+                        }}
                         <span className={"active" if stage == "location" else ""}></span>
                     </div>
 
                     {if stage == "name" {
                         <div key="name">
+                            {if notice {
+                                <p className="auth-notice" key="no-account">{notice}</p>
+                            }}
                             <div className="eyebrow">Let’s get acquainted</div>
                             <h1>What’s your name?</h1>
                             <input
@@ -401,67 +420,127 @@ def:pub Gate(onReady: Callable[[], None]) -> JsxElement {
                     <button className="back-link" onClick={back_to_directory}>
                         ← choose a different path
                     </button>
-                    {if selected_role == "helper" {
-                        <div className="eyebrow" key="portal">Volunteer portal</div>
-                    }}
-                    <h1>
-                        {"Sign in to help" if selected_role == "helper" else "Sign in to get support"}
-                    </h1>
                     {if selected_role == "seeker" {
-                        <p className="muted small" key="quick-access-help" style={{"marginTop": "8px"}}>
-                            Sign in once, then use Quick access in Settings to return without a password on this device.
-                        </p>
+                        <div key="seeker-login">
+                            <div className="eyebrow">Private support</div>
+                            <h1>{"Enter your password" if login_stage == "password" else "What’s your email?"}</h1>
+                            {if login_stage == "email" {
+                                <div key="seeker-email">
+                                    <p className="muted small" style={{"marginTop": "8px"}}>
+                                        No password is required unless you chose one in Settings.
+                                    </p>
+                                    <label className="lbl" style={{"marginTop": "18px"}}>Email</label>
+                                    <input
+                                        className="field"
+                                        type="email"
+                                        value={email}
+                                        autocomplete="email"
+                                        maxlength="254"
+                                        placeholder="you@example.com"
+                                        autofocus={True}
+                                        onChange={lambda (e: ChangeEvent) {
+                                            email = e.target.value;
+                                            error = "";
+                                        }}
+                                    />
+                                    <button
+                                        className="btn primary full"
+                                        onClick={submit_seeker_email}
+                                        disabled={busy or not email.strip()}
+                                    >
+                                        {"Checking…" if busy else "Continue"}
+                                    </button>
+                                </div>
+                            } else {
+                                <div key="seeker-password">
+                                    <p className="muted small" style={{"marginTop": "8px"}}>
+                                        A password is configured for <b>{email}</b>.
+                                    </p>
+                                    <label className="lbl" style={{"marginTop": "18px"}}>Password</label>
+                                    <input
+                                        className="field"
+                                        type="password"
+                                        value={password}
+                                        autocomplete="current-password"
+                                        autofocus={True}
+                                        onChange={lambda (e: ChangeEvent) {
+                                            password = e.target.value;
+                                            error = "";
+                                        }}
+                                    />
+                                    <button
+                                        className="btn primary full"
+                                        onClick={do_login}
+                                        disabled={busy or not password}
+                                    >
+                                        {"Working…" if busy else "Sign in"}
+                                    </button>
+                                    <button
+                                        className="text-btn"
+                                        onClick={lambda {
+                                            login_stage = "email";
+                                            password = "";
+                                            error = "";
+                                        }}
+                                    >
+                                        Use a different email
+                                    </button>
+                                </div>
+                            }}
+                        </div>
+                    } else {
+                        <div key="helper-login">
+                            <div className="eyebrow">Volunteer portal</div>
+                            <h1>Sign in to help</h1>
+                            <div className="contact-tabs login-tabs" role="tablist" aria-label="Sign-in method">
+                                <button
+                                    role="tab"
+                                    aria-selected={login_method == "email"}
+                                    className={"contact-tab active" if login_method == "email" else "contact-tab"}
+                                    onClick={lambda { login_method = "email"; email = ""; error = ""; }}
+                                >Email</button>
+                                <button
+                                    role="tab"
+                                    aria-selected={login_method == "phone"}
+                                    className={"contact-tab active" if login_method == "phone" else "contact-tab"}
+                                    onClick={lambda { login_method = "phone"; email = ""; error = ""; }}
+                                >Phone</button>
+                            </div>
+                            <label className="lbl" style={{"marginTop": "12px"}}>
+                                {"Email" if login_method == "email" else "Phone number"}
+                            </label>
+                            <input
+                                className="field"
+                                type={"email" if login_method == "email" else "tel"}
+                                value={email}
+                                autocomplete={"email" if login_method == "email" else "tel"}
+                                maxlength={"254" if login_method == "email" else "25"}
+                                placeholder={"you@example.com" if login_method == "email" else "(555) 123-4567"}
+                                onChange={lambda (e: ChangeEvent) {
+                                    email = e.target.value;
+                                    error = "";
+                                }}
+                            />
+                            <label className="lbl" style={{"marginTop": "12px"}}>Password</label>
+                            <input
+                                className="field"
+                                type="password"
+                                value={password}
+                                autocomplete="current-password"
+                                onChange={lambda (e: ChangeEvent) { password = e.target.value; }}
+                            />
+                            <button
+                                className="btn primary full"
+                                onClick={do_login}
+                                disabled={busy}
+                            >
+                                {"Working…" if busy else "Sign in"}
+                            </button>
+                            <button className="btn ghost full create-account" onClick={start_signup}>
+                                Create new account
+                            </button>
+                        </div>
                     }}
-                    <div className="contact-tabs login-tabs" role="tablist" aria-label="Sign-in method">
-                        <button
-                            role="tab"
-                            aria-selected={login_method == "email"}
-                            className={"contact-tab active" if login_method == "email" else "contact-tab"}
-                            onClick={lambda { login_method = "email"; email = ""; error = ""; }}
-                        >Email</button>
-                        <button
-                            role="tab"
-                            aria-selected={login_method == "phone"}
-                            className={"contact-tab active" if login_method == "phone" else "contact-tab"}
-                            onClick={lambda { login_method = "phone"; email = ""; error = ""; }}
-                        >Phone</button>
-                    </div>
-                    <label className="lbl" style={{"marginTop": "12px"}}>
-                        {"Email" if login_method == "email" else "Phone number"}
-                    </label>
-                    <input
-                        className="field"
-                        type={"email" if login_method == "email" else "tel"}
-                        value={email}
-                        autocomplete={"email" if login_method == "email" else "tel"}
-                        maxlength={"254" if login_method == "email" else "25"}
-                        placeholder={"you@example.com" if login_method == "email" else "(555) 123-4567"}
-                        onChange={lambda (e: ChangeEvent) {
-                            email = e.target.value;
-                            error = "";
-                        }}
-                    />
-
-                    <label className="lbl" style={{"marginTop": "12px"}}>Password</label>
-                    <input
-                        className="field"
-                        type="password"
-                        value={password}
-                        onChange={lambda (e: ChangeEvent) { password = e.target.value; }}
-                    />
-
-                    <button
-                        className="btn primary"
-                        style={{"marginTop": "16px", "width": "100%"}}
-                        onClick={do_login}
-                        disabled={busy}
-                    >
-                        {"Working..." if busy else "Sign in"}
-                    </button>
-
-                    <button className="btn ghost full create-account" onClick={start_signup}>
-                        Create new account
-                    </button>
 
                     {if error {
                         <p className="err" key="e2" style={{"marginTop": "10px"}}>{error}</p>

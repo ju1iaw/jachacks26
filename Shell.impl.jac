@@ -18,12 +18,7 @@ impl Shell.load -> None {
             phone = account.phone;
             location = account.location;
             eligibility_notes = account.eligibility_notes;
-            storage = (window as any).localStorage;
-            quick_access = storage.getItem("bridge_quick_access") != "off";
-            locked = (
-                quick_access
-                and storage.getItem("bridge_screen_locked") == "true"
-            );
+            password_enabled = account.password_enabled;
         }
     } except Exception {
         role = "";
@@ -33,19 +28,12 @@ impl Shell.load -> None {
 
 
 impl Shell.sign_out(e: MouseEvent) -> None {
-    if role == "seeker" and quick_access {
-        locked = True;
-        seeker_panel = "home";
-        (window as any).localStorage.setItem("bridge_screen_locked", "true");
-        return;
-    }
     sign_out_completely(e);
 }
 
 
 impl Shell.sign_out_completely(e: MouseEvent) -> None {
     jacLogout();
-    (window as any).localStorage.removeItem("bridge_screen_locked");
     role = "";
     display_name = "";
     contact_method = "";
@@ -54,27 +42,10 @@ impl Shell.sign_out_completely(e: MouseEvent) -> None {
     phone = "";
     location = "";
     eligibility_notes = "";
+    password_enabled = False;
     signed_in = False;
     ready = True;
     seeker_panel = "home";
-    locked = False;
-}
-
-
-impl Shell.continue_quick_access(e: MouseEvent) -> None {
-    (window as any).localStorage.removeItem("bridge_screen_locked");
-    locked = False;
-}
-
-
-impl Shell.set_quick_access(enabled: bool) -> None {
-    quick_access = enabled;
-    storage = (window as any).localStorage;
-    storage.setItem("bridge_quick_access", "on" if enabled else "off");
-    if not enabled {
-        storage.removeItem("bridge_screen_locked");
-        locked = False;
-    }
 }
 
 

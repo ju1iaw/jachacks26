@@ -43,6 +43,7 @@ node Account {
     # employment, etc.). Editable in Settings so the person can correct them.
     has eligibility_notes: str = "";
     has org_id: str = "";
+    has password_enabled: bool = False;
 }
 
 node ContactClaim {
@@ -445,6 +446,7 @@ obj AccountView {
     has location: str = "";
     has eligibility_notes: str = "";
     has org_id: str = "";
+    has password_enabled: bool = False;
 }
 
 
